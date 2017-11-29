@@ -1,4 +1,4 @@
-libvirt实现了一个框架，用于确保虚拟机在共享宿主机资源的时候能够实现资源的互斥访问。典型的应用场景是实现一个写锁，阻止两个虚拟机进程同时获取共享磁盘镜像的写权限，因为不这样的话，在不使用集群文件系统的客户机上会导致数据损坏。
+libvirt实现了一个框架，用于确保虚拟机在共享宿主机资源的时候能够实现资源的互斥访问。典型的应用场景是实现一个写锁，阻止两个虚拟机进程同时获取共享磁盘镜像的写权限，因为不这样的话，在不使用集群文件系统的客户机上使用共享磁盘可能会导致数据损坏。
 
 #### 目标
 阻止多个QEMU实例同时使用同一个磁盘镜像，除非这个镜像被标识为共享的，或者只读。要实现资源互斥的场景是：
@@ -149,3 +149,6 @@ foreach (initial disks)
 virLockManagerRelease(mgr, & state, 0);
 ```
 返回的状态字符串可以传递给`virLockManagerAcquire`方法，以便后续重新获取完全相同的锁。执行虚拟机热迁移的时候就是这种情况。通过验证锁管理器的状态可以确保在其他宿主机上，没有虚拟机重新获取同一把锁。通过调用`virLockManagerInquire`方法也可以在不释放锁的情况下获得锁的状态。
+
+[1] Virtual machine lock manager, https://libvirt.org/locking.html
+[2] Resource Lock Manager, https://libvirt.org/internals/locking.html
