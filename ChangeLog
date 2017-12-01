@@ -1,0 +1,10 @@
+- 1st week (11/27/2017 - 12/01/2017)
+  - [libvirt lock manager](research/README.md)
+  - [lock manager implementation detail](research/lock-manager.md)
+  - [lock manager types implementated](research/lock.md)
+  - linux file lock
+	- [LWN.net: File-private POSIX locks](https://lwn.net/Articles/586904/)
+    - [blog: File locking in Linux](https://gavv.github.io/blog/file-locks/)
+	- [GNU doc: 13.15 File Locks](https://www.gnu.org/software/libc/manual/html_node/File-Locks.html)
+	- [GNU doc: 13.16 Open File Description Locks](https://www.gnu.org/software/libc/manual/html_node/Open-File-Description-Locks.html)
+	- [Setting up virtlockd on NFS](https://rwmj.wordpress.com/2014/05/08/setting-up-virtlockd-on-nfs/)
