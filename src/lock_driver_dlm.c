@@ -1,5 +1,9 @@
 #include "lock_driver.h"
 
+#define DLM_LOCKSPACE_NAME    "libvirt"
+/* This will be set after dlm_controld is started. */
+#define DLM_CLUSTER_NAME_PATH "/sys/kernel/config/dlm/cluster/cluster_name"
+
 VIR_LOG_INIT("locking.lock_driver_dlm");
 
 typedef struct _virLockManagerDlmPrivate virLockManagerDlmPrivate;
@@ -28,6 +32,8 @@ struct _virLockManagerDlmPrivate {
 struct _virLockManagerDlmDriver {
     bool autoDiskLease;
     bool requireLeaseForDisks;
+    char *lockspaceName;
+    dlm_lshandle_t ls;
 }
 
 static virLockManagerDlmDriverPtr driver;
@@ -53,9 +59,10 @@ static int virLockManagerDlmLoadConfig(const char *configFile)
     if (virConfGetValueBool(conf, "auto_disk_leases", &driver->autoDiskLease) < 0)
         goto cleanup;
 
-    // TODO: other settings
+    if (virConfGetValueString(conf, "lockspace_name", &driver->lockspaceName) < 0)
+        goto cleanup;
 
-    driver->requireLeaseForDisks = !river->autoDiskLeases;
+    driver->requireLeaseForDisks = !driver->autoDiskLease;
     if (virConfGetValueString(conf, "require_lease_for_disks", &driver->requireLeaseForDisks) < 0)
         goto cleanup;
 
@@ -63,6 +70,44 @@ static int virLockManagerDlmLoadConfig(const char *configFile)
 
  cleanup:
     virConfFree(conf);
+    return ret;
+}
+
+static int virLockManagerDlmSetupLockspace(virLockManagerDlmDriverPtr driver)
+{
+    int ret = -1;
+    dlm_lshandle_t ls;
+
+    /* check dlm_controld */
+    ret = access(DLM_CLUSTER_NAME_PATH, O_REONLY);
+    if (ret < 0) {
+        // TODO: change error type
+        virReportSystemError(VIR_ERR_INTERNAL_ERROR, "%s",
+                             _("Check dlm_controld"));
+    } else {
+        ls = dlm_create_lockspace(driver->lockspaceName, MODE);
+        if (!ls) {
+            driver->ls = ls;
+            ret = 0;
+        } else if (!ls && errno == -EEXIST) {
+            ls = dlm_open_lockspace(driver->lockspaceName);
+            if(!ls) {
+                driver->ls = ls;
+                ret = 0;
+            } else {
+                // TODO: change error type
+                virReportSystemError(VIR_ERR_INTERNAL_ERROR, "%s",
+                                     _("Dlm lockspace open error"));
+                ret = -1;
+            }
+        } else {
+            // TODO: change error type
+            virReportSystemError(VIR_ERR_INTERNAL_ERROR, "%s",
+                                 _("Dlm locksapce create error"));
+            ret = -1;
+        }
+    }
+
     return ret;
 }
 
@@ -90,7 +135,7 @@ static int virLockManagerDlmAddDisk(virLockManagerDlmDriverPtr driver,
     if (virCryptoHashString(VIR_CRYPTO_HASH_SHA256, name, &hash) < 0)
         goto cleanup;
 
-    // TODO
+    // TODO: fill component to `"struct dlm"`
 
     ret = 0;
 
@@ -127,6 +172,13 @@ static int virLockManagerDlmInit(unsigned int version,
 
     virCheckFlags(0, -1);
 
+    /* create lockspace needs previleges */
+    if (geteuid() != 0) {
+        virReportError(VIR_ERR_INTERNAL_ERROR,
+                       _("Dlm lock requires superuser privileges"));
+        return -1;
+    }
+
     if (driver)
         return 0;
 
@@ -134,17 +186,22 @@ static int virLockManagerDlmInit(unsigned int version,
         return -1;
 
     driver->autoDiskLeases = true;
+    if (VIR_STRDUP(driver->lockspaceName, DLM_LOCKSPACE_NAME) < 0) {
+        VIR_FREE(driver);
+        goto cleanup;
+    }
 
     if (virLockManagerDlmLoadConfig(configFile) < 0)
-        goto error;
+        goto cleanup;
 
     if (driver->autoDiskLease) {
-        // TODO: when auto disk lease config...
+        if (virLockManagerDlmSetupLockspace(driver) < 0)
+            goto cleanup;
     }
 
     return 0;
 
- error:
+ cleanup:
     virLockManagerDlmDeinit();
     return -1;
 }
@@ -154,7 +211,11 @@ static int virLockManagerDlmDeinit(void)
     if (!driver)
         return 0;
 
-    // TODO release memory
+    /* force release lockspace if exist */
+    if (driver->ls) {
+        dlm_release_lockspace(driver->lockspaceName, driver->ls, 1);
+
+    VIR_FREE(driver->lockspaceName);
     VIR_FREE(driver);
 
     return 0;
@@ -216,7 +277,7 @@ static int virLockManagerDlmNew(virLockManagerPtr lock,
     lock->privateData = priv;
     return 0;
 
- error:
+ cleanup:
     VIR_FREE(priv);
     return -1;
 }
@@ -290,6 +351,82 @@ static int virLockManagerDlmAddResource(virLockManagerPtr lock,
                            type);
             return -1;
     }
+
+    return 0;
+}
+
+static int virLockManagerDlmAcquire(virLockManagerPtr lock,
+                                    const char *state,
+                                    unsigned int flags,
+                                    virDomainLockFailureAction action ATTRIBUTE_UNUSED,
+                                    int *fd)
+{
+    virLockManagerDlmPrivatePtr priv = lock->privateData;
+    int nresources = 0;
+
+    virCheckFlags(VIR_LOCK_MANAGER_ACQUIRE_REGISTER_ONLY |
+                  VIR_LOCK_MANAGER_ACQUIRE_RESTRICT, -1);
+
+    if (priv->nresources == 0 &&
+        priv->hasRWDisks &&
+        driver->requireLeaseForDisks) {
+        virReportError(VIR_ERR_CONFIG_UNSUPPORTEd, "%s",
+                       _("Read/write, exclusive access, disks were present, but not leases specified"));
+        return -1;
+    }
+
+    /**
+     * only initialize if in the read child process
+     */
+    if (priv->pid == getpid()) {
+        // TODO: acquire lock
+        // register
+        priv->registered = true;
+    } else if (!priv->registered) {
+        VIR_DEBUG("Process not registered, not acquiring lock");
+        return 0;
+    }
+
+    // TODO
+    if (!(flags & VIR_LOCK_MANAGER_ACQUIRE_REGISTER_ONLY)) {
+        
+    }
+
+    if (flags & VIR_LOCK_MANAGER_ACQUIRE_RESTRICT) {
+    
+    }
+}
+
+static int virLockManagerDlmRelease(virLockManagerPtr lock,
+                                    char **state,
+                                    unsigned int flags)
+{
+    virLockManagerDlmPrivatePtr priv = lock->privateData;
+    int nresources = priv->nresources;
+    int rv;
+
+    virCheckFlags(0, -1);
+
+    if(!priv->registered) {
+        VIR_DEBUG("Process not registered, skipping release");
+        return 0;
+    }
+
+    if (state) {
+        // TODO
+    }
+}
+
+static int virLockManagerDlmInquire(virLockManagerPtr lock,
+                                    char **state,
+                                    unsigned int flags)
+{
+    virLockManagerDlmPrivatePtr priv = lock->privateData;
+    int rv, nresources;
+
+    virCheckFlags(0, -1);
+
+    // TODO
 }
 
 virLockDriver virLockDriverImpl =
