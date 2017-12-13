@@ -4,6 +4,7 @@
 #define DLM_LOCKSPACE_NAME    "libvirt"
 /* This will be set after dlm_controld is started. */
 #define DLM_CLUSTER_NAME_PATH "/sys/kernel/config/dlm/cluster/cluster_name"
+
 VIR_LOG_INIT("locking.lock_driver_dlm");
 
 typedef struct _virLockManagerDlmResource virLockManagerDlmResource;
@@ -18,7 +19,6 @@ typedef virLockManagerDlmDriver *virLockManagerDlmDriverPtr;
 struct _virLockManagerDlmResource {
     struct dlm_lksb lksb;
     char *name;
-
     uint32_t mode;
 };
 
@@ -38,12 +38,13 @@ struct _virLockManagerDlmPrivate {
 struct _virLockManagerDlmDriver {
     bool autoDiskLease;
     bool requireLeaseForDisks;
+    char *dlmClusterNamePath;
     char *lockspaceName;
-
-    dlm_lshandle_t ls;
+    int  mode;
 }
 
-static virLockManagerDlmDriverPtr driver;
+static virLockManagerDlmDriverPtr driver = NULL;
+static dlm_lshandle_t lockspace = NULL;
 
 static int virLockManagerDlmLoadConfig(const char *configFile)
 {
@@ -65,14 +66,18 @@ static int virLockManagerDlmLoadConfig(const char *configFile)
 
     if (virConfGetValueBool(conf, "auto_disk_leases", &driver->autoDiskLease) < 0)
         goto cleanup;
-
-    if (virConfGetValueString(conf, "lockspace_name", &driver->lockspaceName) < 0)
-        goto cleanup;
-
+    
     driver->requireLeaseForDisks = !driver->autoDiskLease;
     if (virConfGetValueString(conf, "require_lease_for_disks", &driver->requireLeaseForDisks) < 0)
         goto cleanup;
 
+    if (virConfGetValueString(conf, "dlm_cluster_name_path", &driver->dlmClusterNamePath) < 0)
+        goto cleanup;
+
+    if (virConfGetValueString(conf, "lockspace_name", &driver->lockspaceName) < 0)
+        goto cleanup;
+
+    if (virConf)
     ret = 0;
 
 cleanup:
@@ -83,7 +88,6 @@ cleanup:
 static int virLockManagerDlmSetupLockspace(virLockManagerDlmDriverPtr driver)
 {
     int ret = -1;
-    dlm_lshandle_t ls;
 
     /* check dlm_controld */
     ret = access(DLM_CLUSTER_NAME_PATH, O_REONLY);
@@ -91,14 +95,12 @@ static int virLockManagerDlmSetupLockspace(virLockManagerDlmDriverPtr driver)
         virReportSystemError(VIR_ERR_INTERNAL_ERROR, "%s",
                 _("Check dlm_controld, ensure it has setuped"));
     } else {
-        ls = dlm_create_lockspace(driver->lockspaceName, MODE);
-        if (!ls) {
-            driver->ls = ls;
+        lockspace = dlm_create_lockspace(driver->lockspaceName, MODE);
+        if (!lockspace) {
             ret = 0;
-        } else if (!ls && errno == -EEXIST) {
-            ls = dlm_open_lockspace(driver->lockspaceName);
-            if(!ls) {
-                driver->ls = ls;
+        } else if (!lockspace && errno == -EEXIST) {
+            lockspace = dlm_open_lockspace(driver->lockspaceName);
+            if (!lockspace) {
                 ret = 0;
             } else {
                 virReportSystemError(VIR_ERR_DLM_ERROR, "%s",
@@ -194,7 +196,12 @@ static int virLockManagerDlmInit(unsigned int version,
         return -1;
 
     driver->autoDiskLeases = true;
+    driver->mode = 0600;
+    if (VIR_STRDUP(driver->dlmClusterNamePath, DLM_CLUSTER_NAME_PATH) < 0) {
+        VIR_FREE(driver);
+    }
     if (VIR_STRDUP(driver->lockspaceName, DLM_LOCKSPACE_NAME) < 0) {
+        VIR_FREE(driver->dlmDlusterNamePath);
         VIR_FREE(driver);
         goto cleanup;
     }
