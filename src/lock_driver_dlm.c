@@ -226,8 +226,8 @@ static int virLockManagerDlmDeinit(void)
     if (!driver)
         return 0;
 
-    /* not release lock and lockspace when restart libvirt */
-    free(driver->ls);
+    /* release all lock opened by self-process in lockspace */
+    dlm_close_lockspace(lockspace);
 
     VIR_FREE(driver->lockspaceName);
     VIR_FREE(driver);
@@ -317,7 +317,7 @@ static int virLockManagerDlmAddResource(virLockManagerPtr lock,
         unsigned int flags)
 {
     virLockManagerDlmPrivatePtr priv = lock->privateData;
-    char *hash = NULL;
+    char *newName = NULL;
     int ret = -1;
 
     virCheckFlags(VIR_LOCK_MANAGER_RESOURCE_READONLY |
@@ -329,13 +329,23 @@ static int virLockManagerDlmAddResource(virLockManagerPtr lock,
 
     switch (type) {
         case VIR_LOCK_MANAGER_RESOURCE_TYPE_DISK:
+            /*
+             * virLockManagerAddResource(lock,
+             *                   VIR_LOCK_MANAGER_RESOURCE_TYPE_DISK,
+             *                    src->path,
+             *                    0,
+             *                    NULL,
+             *                    diskFlags)
+             * diskFlags --> VIR_LOCK_MANAGER_RESOURCE_READONLY
+             *               VIR_LOCK_MANAGER_RESOURCE_SHARED
+             */
             if (driver->autoDiskLease) {
                 if (params || nparams) {
                     virReportError(VIR_ERR_INITERNAL_ERROR, "%s",
                             _("Unexpected parameters for disk resource"));
                 }
 
-                if (virCryptoHashString(VIR_CRYPTO_HASH_SHA256, name, &hash) < 0)
+                if (virCryptoHashString(VIR_CRYPTO_HASH_SHA256, name, &newName) < 0)
                     goto cleanup;
             } else {
                 if (!(flags & (VIR_LOCK_MANAGER_RESOURCE_SHARED |
@@ -346,27 +356,47 @@ static int virLockManagerDlmAddResource(virLockManagerPtr lock,
             break;
 
         case VIR_LOCK_MANAGER_RESOURCE_TYPE_LEASE:
+            /*
+             * virLockManagerAddResource(lock,
+             *                    VIR_LOCK_MANAGER_RESOURCE_TYPE_LEASE,
+             *                    lease->key,
+             *                    nparams,
+             *                    lparams,
+             *                    leaseFlags)
+
+             * struct _virDomainLeaseDef {
+             *  char *lockspace;           --> "lockspace"
+             *  char *key;                 --> name
+             *  char *path;                --> "path"
+             *  unsigned long long offset; --> "offset"
+             * };
+             *
+             * leaseFlags --> 0
+             */
+            /* ignore
             size_t i;
             for (i = 0; i < nparams; i++) {
-                if (STREQ(params[i].key, "offset")) {
+                if (STREQ(params[i].key, "path")) {
+                    // ignore 
+                } else if (STREQ(params[i].key, "offset")) {
                     if (params[i].value.ul != 0) {
                         virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
                                 _("Offset must be zero for this lock manager"));
                         return -1;
                     }
                 } else if (STREQ(params[i].key, "lockspace")) {
-                    /* ignore */
-                } else if (STREQ(params[i].key, "path")) {
-                    if (virCryptoHashString(VIR_CRYPTO_HASH_SHA256, params[i].value.str, &hash) < 0)
-                        goto cleanup;
-
+                    // ignore 
                 } else {
                     virReportError(VIR_ERR_INTERNAL_ERROR,
                             _("Unexpected parameter %s for lease resource"),
                             params[i].key);
                     return -1;
                 }
-            }
+            } */
+
+            if (VIR_STRDUP(newName, name) < 0)
+                goto cleanup;
+
             break;
 
         default:
@@ -379,7 +409,7 @@ static int virLockManagerDlmAddResource(virLockManagerPtr lock,
     if (VIR_EXPAND_N(priv->resources, priv->nresources, 1) < 0)
         goto cleanup;
 
-    if (VIR_STRDUP(priv->resources[priv->nresources-1].name, hash) < 0)
+    if (VIR_STRDUP(priv->resources[priv->nresources-1].name, newName) < 0)
         goto cleanup;
 
     if (!!(flags & VIR_LOCK_MANAGER_RESOURCE_SHARED))
@@ -390,8 +420,8 @@ static int virLockManagerDlmAddResource(virLockManagerPtr lock,
     ret = 0;
 
 cleanup:
-    if (hash)
-        VIR_FREE(hash);
+    if (newName)
+        VIR_FREE(newName);
 
     return ret;
 }

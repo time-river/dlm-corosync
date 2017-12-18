@@ -20,6 +20,8 @@ virDomainLockManagerAddLease(lock, lease)
  * @driver: the lock manager implementation to use
  * @type: the type of process to be supervised
  * @flags: bitwise-OR of virLockManagerNewFlags
+ *
+ * @name: disk absolute path
 **/
 
 virLockManagerNew(driver, type, nparams, params, flags)
@@ -49,6 +51,10 @@ virDomainLockProcessResume
 virDomainLockProcessInquire
 
 #### 流程
+
+/*
+ * @dom: vm information
+ */
 
 qemuProcessStart
  -- qemuProcessLaunch
@@ -141,6 +147,23 @@ virDomainLockLeaseAttach
 virDomainLockLeaseDetach
 
 #### 实现
+
+/*
+struct _virDomainLeaseDef {
+    char *lockspace;
+    char *key;
+    char *path;
+    unsigned long long offset;
+};
+
+compare:
+
+virDomainLockManagerAddImage(lock, src)
+@src: image information
+
+virDomainLockManagerAddLease(lock, lease)
+@lease: hotplug device information
+*/
 
 qemuDomainAttachLease
  -- virDomainLockLeaseAttach
