@@ -26,6 +26,9 @@ typedef enum {
 /**
  * header: src/driver-hypervisor.h
  * qemu implementation: src/qemu/qemu_driver.c
+
+ QEMU 启动过程: -S 参数创建而不启动, 之后在 qemuProcessFinishStartup 中调用 qemuProcessStartCPUs 启动 VM
+
  */
 static virHypervisorDriver qemuHypervisorDriver = {
     .domainCreateXML = qemuDomainCreateXML, // create, decide vCPUs start or not according args, set state `VIR_DOMAIN_PAUSED` or `VIR_DOMAIN_RUNNING`
@@ -42,7 +45,7 @@ static virHypervisorDriver qemuHypervisorDriver = {
     .domainReset = qemuDomainReset,
 
     domainCreate = qemuDomainCreate,
-    .domainCreateWithFlags = qemuDomainCreateWithFlags, // virsh start
+    .domainCreateWithFlags = qemuDomainCreateWithFlags, // virsh start command
 }
 
 /**

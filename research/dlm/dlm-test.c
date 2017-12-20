@@ -90,18 +90,23 @@ int main(void) {
 
         switch(op){
             case 1: // lock
-                DEBUG_LOG("resource: %s, mode: %x, flags: 0, lockid: %x", resource, mode, lockid);
-                ret = lock_resource(resource, mode, 0, &lockid);
+                DEBUG_LOG("lock, resource: %s, mode: %x, flags: 0, lockid: %x", resource, mode, lockid);
+                ret = lock_resource(resource, mode, LKF_NOQUEUE|LKF_NODLCKWT, &lockid);
                 ret_log(ret, "lock_resource", lockid);
                 break;
             case 2: // unlock
-                DEBUG_LOG("resource: %s, mode: %x, flags: 0, lockid: %x", resource, mode, lockid);
+                DEBUG_LOG("unlock, resource: %s, mode: %x, flags: 0, lockid: %x", resource, mode, lockid);
                 ret = unlock_resource(lockid);
                 ret_log(ret, "unlock_resource", lockid);
                 break;
             case 3:
                 fprintf(stdout, "exit");
                 return 0;
+            case 4: // convert
+                DEBUG_LOG("convert, resource: %s, mode: %x, flags: 0, lockid: %x", resource, mode, lockid);
+                ret = lock_resource(resource, mode, LKF_CONVERT|LKF_NOQUEUE|LKF_NODLCKWT, &lockid);
+                ret_log(ret, "lock_resource", lockid);
+                break;
             default:
                 fprintf(stderr, "input error\n");
                 continue;

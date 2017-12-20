@@ -24,7 +24,7 @@ struct _virLockManagerDlmResource {
 
 struct _virLockManagerDlmPrivate {
     unsigned char uuid[VIR_UUID_BUFLEN];
-    char *name;
+    char *vm_name;
     pid_t pid;
     int id;
     const char *uri;
@@ -265,7 +265,7 @@ static int virLockManagerDlmNew(virLockManagerPtr lock,
         if (STREQ(params[i].key, "uuid")) {
             memcpy(priv->uuid, params[i].value.uuid, VIR_UUID_BUFLEN);
         } else if (STREQ(params[i].key, "name")){
-            if (VIR_STRDUP(priv->name, params[i].value.str) < 0)
+            if (VIR_STRDUP(priv->vm_name, params[i].value.str) < 0)
                 goto cleanup;
         } else if (STREQ(params[i].key, "id")) {
             priv->id = params[i].value.iv;
@@ -298,11 +298,11 @@ struct void virLockManagerDlmFree(virLockManagerPtr lock)
         return;
 
     for (i = 0; i < priv->nresources; i++) {
-        VIR_FREE(priv->resources[i].name);
+        VIR_FREE(priv->resources[i].vm_name);
         VIR_FREE(priv->resources[i]);
     }
 
-    VIR_FREE(priv->name);
+    VIR_FREE(priv->vm_name);
     VIR_FREE(priv);
     lock->privateData = NULL;
 
@@ -316,6 +316,7 @@ static int virLockManagerDlmAddResource(virLockManagerPtr lock,
         virLockManagerParamPtr params,
         unsigned int flags)
 {
+    /* lockspace path, resource */
     virLockManagerDlmPrivatePtr priv = lock->privateData;
     char *newName = NULL;
     int ret = -1;
@@ -427,10 +428,10 @@ cleanup:
 }
 
 static int virLockManagerDlmAcquire(virLockManagerPtr lock,
-        const char *state ATTRIBUTE_UNUSED, // not allow mannual lock like sanlock
+        const char *state ATTRIBUTE_UNUSED,
         unsigned int flags,
-        virDomainLockFailureAction action ATTRIBUTE_UNUSED,
-        int *fd)
+        virDomainLockFailureAction action ATTRIBUTE_UNUSED, // XML setting: on_lockfailure 
+        int *fd ATTRIBUTE_UNUSED)
 {
     virLockManagerDlmPrivatePtr priv = lock->privateData;
     int nresources = 0;
@@ -548,13 +549,11 @@ static int virLockManagerDlmRelease(virLockManagerPtr lock,
     return 0;
 }
 
-static int virLockManagerDlmInquire(virLockManagerPtr lock,
+static int virLockManagerDlmInquire(virLockManagerPtr lock ATTRIBUTE_UNUSED,
         char **state,
         unsigned int flags)
 {
-    virLockManagerDlmPrivatePtr priv = lock->privateData;
-    int rv, nresources;
-
+    /* currently, not support mannual lock, so this function almost does nothing */
     virCheckFlags(0, -1);
 
     if (state) {
