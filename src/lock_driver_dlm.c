@@ -353,6 +353,7 @@ static int virLockManagerDlmAddResource(virLockManagerPtr lock,
                                 VIR_LOCK_MANAGER_RESOURCE_READONLY)))
                     priv->hasRWDisks = true;
                 /* Ignore disk resource without error */
+                return 0;
             }
             break;
 

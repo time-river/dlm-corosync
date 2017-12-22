@@ -1,0 +1,60 @@
+a:/home/me # virtlockd 
+2017-12-21 02:56:10.436+0000: 766: info : libvirt version: 3.10.0
+2017-12-21 02:56:10.436+0000: 766: info : hostname: a
+2017-12-21 02:56:10.436+0000: 766: debug : virLogParseOutputs:1731 : outputs=1:stderr
+2017-12-21 02:56:12.833+0000: 766: debug : virLogParseOutput:1559 : output=1:stderr
+2017-12-21 02:56:12.833+0000: 766: info : libvirt version: 3.10.0
+2017-12-21 02:56:12.833+0000: 766: info : hostname: a
+2017-12-21 02:56:12.833+0000: 766: debug : main:1233 : Decided on pid file path '/var/run/virtlockd.pid'
+2017-12-21 02:56:12.837+0000: 766: debug : main:1241 : Decided on socket paths '/var/run/libvirt/virtlockd-sock'
+2017-12-21 02:56:12.837+0000: 766: debug : main:1249 : Decided on restart state file path '/var/run/virtlockd-restart-exec.json'
+2017-12-21 02:56:12.837+0000: 766: debug : main:1266 : Ensuring run dir '/var/run/libvirt' exists
+2017-12-21 02:56:12.837+0000: 766: debug : virFileMakePathHelper:2923 : path=/var/run/libvirt mode=0777
+2017-12-21 02:56:12.837+0000: 766: debug : virLockDaemonPostExecRestart:895 : Running post-restart exec
+2017-12-21 02:56:12.837+0000: 766: debug : virLockDaemonPostExecRestart:899 : No restart state file /var/run/virtlockd-restart-exec.json present
+2017-12-21 02:56:12.837+0000: 766: info : virObjectNew:254 : OBJECT_NEW: obj=0x56439e08add0 classname=virNetServer
+2017-12-21 02:56:12.837+0000: 766: info : virObjectNew:254 : OBJECT_NEW: obj=0x56439e08b250 classname=virNetDaemon
+2017-12-21 02:56:12.837+0000: 766: debug : virEventRegisterDefaultImpl:280 : registering default event implementation
+2017-12-21 02:56:12.837+0000: 766: debug : virEventPollAddHandle:115 : Used 0 handle slots, adding at least 10 more
+2017-12-21 02:56:12.837+0000: 767: debug : virThreadJobSetWorker:77 : Thread 767 is running worker virNetServerHandleJob
+2017-12-21 02:56:12.837+0000: 766: debug : virEventPollInterruptLocked:722 : Skip interrupt, 0 0
+2017-12-21 02:56:12.837+0000: 766: info : virEventPollAddHandle:140 : EVENT_POLL_ADD_HANDLE: watch=1 fd=4 events=1 cb=0x56439d86ae90 opaque=(nil) ff=(nil)
+2017-12-21 02:56:12.837+0000: 766: debug : virEventRegisterImpl:241 : addHandle=0x56439d86b5d0 updateHandle=0x56439d86b900 removeHandle=0x56439d86aef0 addTimeout=0x56439d86b070 updateTimeout=0x56439d86b270 removeTimeout=0x56439d86b440
+2017-12-21 02:56:12.838+0000: 766: info : virObjectRef:388 : OBJECT_REF: obj=0x56439e08add0
+2017-12-21 02:56:12.838+0000: 766: info : virObjectUnref:350 : OBJECT_UNREF: obj=0x56439e08add0
+2017-12-21 02:56:12.838+0000: 766: debug : virLockSpaceNew:246 : directory=<null>
+2017-12-21 02:56:12.838+0000: 766: info : virObjectRef:388 : OBJECT_REF: obj=0x56439e08add0
+2017-12-21 02:56:12.838+0000: 766: debug : virGetListenFDs:1926 : Setting up networking from caller
+2017-12-21 02:56:12.838+0000: 766: debug : virGetListenFDs:1929 : No LISTEN_PID from caller
+2017-12-21 02:56:12.838+0000: 766: debug : virLockDaemonSetupNetworkingNative:576 : Setting up networking natively
+2017-12-21 02:56:12.838+0000: 766: info : virObjectNew:254 : OBJECT_NEW: obj=0x56439e08bba0 classname=virNetServerService
+2017-12-21 02:56:12.838+0000: 766: debug : virNetSocketNew:236 : localAddr=0x7ffe10166f20 remoteAddr=(nil) fd=6 errfd=-1 pid=0
+2017-12-21 02:56:12.838+0000: 766: info : virObjectNew:254 : OBJECT_NEW: obj=0x56439e08bf10 classname=virNetSocket
+2017-12-21 02:56:12.838+0000: 766: info : virNetSocketNew:292 : RPC_SOCKET_NEW: sock=0x56439e08bf10 fd=6 errfd=-1 pid=0 localAddr=127.0.0.1;0, remoteAddr=<null>
+2017-12-21 02:56:12.838+0000: 766: info : virObjectRef:388 : OBJECT_REF: obj=0x56439e08bba0
+2017-12-21 02:56:12.838+0000: 766: info : virObjectRef:388 : OBJECT_REF: obj=0x56439e08bf10
+2017-12-21 02:56:12.838+0000: 766: debug : virEventPollInterruptLocked:722 : Skip interrupt, 0 0
+2017-12-21 02:56:12.838+0000: 766: info : virEventPollAddHandle:140 : EVENT_POLL_ADD_HANDLE: watch=2 fd=6 events=0 cb=0x56439d84ba90 opaque=0x56439e08bf10 ff=0x56439d84ba40
+2017-12-21 02:56:12.838+0000: 766: info : virObjectRef:388 : OBJECT_REF: obj=0x56439e08bba0
+2017-12-21 02:56:12.838+0000: 766: info : virObjectUnref:350 : OBJECT_UNREF: obj=0x56439e08add0
+2017-12-21 02:56:12.838+0000: 766: info : virObjectRef:388 : OBJECT_REF: obj=0x56439e08add0
+2017-12-21 02:56:12.838+0000: 766: debug : virEventPollInterruptLocked:722 : Skip interrupt, 0 0
+2017-12-21 02:56:12.838+0000: 766: info : virEventPollAddHandle:140 : EVENT_POLL_ADD_HANDLE: watch=3 fd=7 events=1 cb=0x56439d845840 opaque=0x56439e08b250 ff=(nil)
+2017-12-21 02:56:12.838+0000: 766: info : virObjectNew:254 : OBJECT_NEW: obj=0x56439e0862b0 classname=virNetServerProgram
+2017-12-21 02:56:12.838+0000: 766: debug : virNetServerProgramNew:84 : prog=0x56439e0862b0
+2017-12-21 02:56:12.838+0000: 766: info : virObjectRef:388 : OBJECT_REF: obj=0x56439e0862b0
+2017-12-21 02:56:12.838+0000: 766: info : virEventPollUpdateHandle:152 : EVENT_POLL_UPDATE_HANDLE: watch=2 events=1
+2017-12-21 02:56:12.838+0000: 766: debug : virEventPollInterruptLocked:722 : Skip interrupt, 0 0
+2017-12-21 02:56:12.838+0000: 766: debug : virSystemdNotifyStartup:477 : Skipping systemd notify, not requested
+2017-12-21 02:56:12.838+0000: 766: debug : virNetDaemonRun:814 : dmn=0x56439e08b250 quit=0
+2017-12-21 02:56:12.838+0000: 766: debug : virEventRunDefaultImpl:324 : running default event implementation
+2017-12-21 02:56:12.838+0000: 766: debug : virEventPollCleanupTimeouts:525 : Cleanup 0
+2017-12-21 02:56:12.838+0000: 766: debug : virEventPollCleanupTimeouts:561 : Found 0 out of 0 timeout slots used, releasing 0
+2017-12-21 02:56:12.838+0000: 766: debug : virEventPollCleanupHandles:574 : Cleanup 3
+2017-12-21 02:56:12.838+0000: 766: debug : virEventPollMakePollFDs:401 : Prepare n=0 w=1, f=4 e=1 d=0
+2017-12-21 02:56:12.838+0000: 766: debug : virEventPollMakePollFDs:401 : Prepare n=1 w=2, f=6 e=1 d=0
+2017-12-21 02:56:12.838+0000: 766: debug : virEventPollMakePollFDs:401 : Prepare n=2 w=3, f=7 e=1 d=0
+2017-12-21 02:56:12.838+0000: 766: debug : virEventPollCalculateTimeout:338 : Calculate expiry of 0 timers
+2017-12-21 02:56:12.838+0000: 766: debug : virEventPollCalculateTimeout:371 : No timeout is pending
+2017-12-21 02:56:12.838+0000: 766: info : virEventPollRunOnce:640 : EVENT_POLL_RUN: nhandles=3 timeout=-1
+
