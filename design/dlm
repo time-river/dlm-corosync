@@ -1,0 +1,11 @@
+<libvirtd pid>
+resource_name qemu_pid lock_id lock_mode
+
+
+---
+
+goals:
+
+'qemu_pid' is to detect whether qemu is alive
+purge need 'previous <libvirtd>'
+adopt orphan need 'resource_name' 'lock_id' 'lock_mode'

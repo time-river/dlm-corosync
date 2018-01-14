@@ -5,6 +5,10 @@
 /* This will be set after dlm_controld is started. */
 #define DLM_CLUSTER_NAME_PATH "/sys/kernel/config/dlm/cluster/cluster_name"
 
+// virPidFileRead
+// virPidFileWrite
+// safewrite
+
 VIR_LOG_INIT("locking.lock_driver_dlm");
 
 typedef struct _virLockManagerDlmResource virLockManagerDlmResource;
@@ -98,7 +102,7 @@ static int virLockManagerDlmSetupLockspace(virLockManagerDlmDriverPtr driver)
         lockspace = dlm_create_lockspace(driver->lockspaceName, MODE);
         if (!lockspace) {
             ret = 0;
-        } else if (!lockspace && errno == -EEXIST) {
+        } else if (lockspace && errno == -EEXIST) {
             lockspace = dlm_open_lockspace(driver->lockspaceName);
             if (!lockspace) {
                 ret = 0;
