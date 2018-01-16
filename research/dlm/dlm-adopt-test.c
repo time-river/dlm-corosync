@@ -180,7 +180,7 @@ int adopt_lock(struct lock_info raw_lock){
         fprintf(stderr, "%s: %s, try again\n", __func__, strerror(errno));
         return -1;
     }
-    if (rv < 0) {
+    else if (rv < 0) {
         fprintf(stderr, "%s: %s\n", __func__, strerror(errno));
         return -1;
     }
@@ -194,6 +194,8 @@ int adopt_lock(struct lock_info raw_lock){
 
     memmove(lock->name, raw_lock.name, LEN);
     lock->qpid = raw_lock.qpid;
+    lock->lkid = lksb.sb_lkid;
+    lock->mode = raw_lock.mode;
 }
 
 int file_init(int fd){
