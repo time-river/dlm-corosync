@@ -97,7 +97,7 @@ int main(int argc, char *argv[]){
     struct lock *lk;
 
     while(true){
-        fprintf(stdout, "input:\n name --> 0, 1\n mode --> 0(PR) 1(EX)\n op --> 0(lock) 1(unlock)\n lkid\n");
+        fprintf(stdout, "\ninput:\n name --> 0, 1\n mode --> 0(PR) 1(EX)\n op --> 0(lock) 1(unlock)\n lkid\n");
         scanf("%d %d %d %d", &raw_name, &raw_mode, &op, &lkid);
         switch(raw_name){
             case 0:
@@ -113,42 +113,39 @@ int main(int argc, char *argv[]){
                 name = "default";
                 break;
         }
+        printf(" name --> %s\n", name);
         switch(raw_mode){
             case 0:
                 mode = LKM_PRMODE;
-                fprintf(stdout, "mode: LKM_PRMODE\n");
+                fprintf(stdout, " mode --> LKM_PRMODE\n");
                 break;
             case 1:
             default:
-                fprintf(stdout, "mode: LKM_EXMODE\n");
+                fprintf(stdout, " mode --> LKM_EXMODE\n");
                 mode = LKM_EXMODE;
                 break;
         }
 
         switch(op){
             case 0:
-                fprintf(stdout, "lock:\n name --> %s\n", name);
+                fprintf(stdout, "action --> lock\n");
+                /*
                 ret = dlm_ls_lock_wait(lockspace, LKM_NLMODE, &lksb, LKF_EXPEDITE, name, strlen(name), 0, NULL, NULL, NULL);
                 if(ret != 0){
                     fprintf(stderr, "%s: %s\n", __func__, strerror(errno));
                     break;
                 }
-                fprintf(stdout, "private locksapce lock\n");
-                ret = dlm_ls_lock_wait(lockspace, LKM_NLMODE, &lksb, LKF_EXPEDITE, name, strlen(name), 0, NULL, NULL, NULL);
-                if(ret != 0){
-                    fprintf(stderr, "%s: %s\n", __func__, strerror(errno));
-                    break;
-                }
-                fprintf(stdout, "lock NL MODE\n");
-                //flags = LKF_PERSISTENT | LKF_NOQUEUE;
-                flags = LKF_CONVERT | LKF_NOQUEUE;
+                fprintf(stdout, "lock NL MODE\n");*/
+                flags = LKF_PERSISTENT | LKF_NOQUEUE;
+                memset(&lksb, 0, sizeof(lksb));
+                //flags = LKF_CONVERT | LKF_NOQUEUE;
                 ret = dlm_ls_lock_wait(lockspace, mode, &lksb, flags, name, strlen(name), 0, NULL, NULL, NULL); 
-                if(ret != 0){
+                if(ret != 0 || lksb.sb_status != 0){
                     fprintf(stderr, "%s: %s\n", __func__, strerror(errno));
-                    dlm_ls_unlock_wait(lockspace, lksb.sb_lkid, flags, &lksb);
+                    //dlm_ls_unlock_wait(lockspace, lksb.sb_lkid, flags, &lksb);
                 }
                 else{
-                    fprintf(stdout, "LOCK EX MODE\n");
+                    fprintf(stdout, "result --> lock success\n lkid --> %d, status --> %d\n", lksb.sb_lkid, lksb.sb_status);
                     lk = create_lock(&lk_list);
                     if(lk != NULL){
                         lk->mode = to_mode_text(mode);
@@ -163,7 +160,7 @@ int main(int argc, char *argv[]){
                 }
                 break;
             default:
-                fprintf(stdout, "unlock\n");
+                fprintf(stdout, "action --> unlock\n");
                 flags = 0;
                 ret = dlm_ls_unlock_wait(lockspace, lkid, flags, &lksb);
                 if(ret != 0){
@@ -204,7 +201,12 @@ bool setup_lockspace(void){
         lockspace = dlm_create_lockspace(LOCKSPACE_NAME, LOCKSPACE_MODE);
     if (!lockspace)
         return false;
-
+    
+    if(dlm_ls_pthread_init(lockspace)){
+        fprintf(stderr, "%s: %s\n", __func__, strerror(errno));
+        if(errno != -EEXIST)
+            return false;
+    }
     return true;
 }
 
@@ -276,13 +278,13 @@ bool adopt_lock(char *raw){
                 name = strdup(subtoken);
                 break;
             case 1:
-                vm_pid = atoi(subtoken);
-                break;
-            case 2:
                 lksb.sb_lkid = atoi(subtoken);
                 break;
-            case 3:
+            case 2:
                 mode = to_mode_uint(subtoken);
+                break;
+            case 3:
+                vm_pid = atoi(subtoken);
                 break;
             default:
                 break;
@@ -299,14 +301,14 @@ bool adopt_lock(char *raw){
             (void *)1, (void *)1, (void *)1,
             NULL, NULL);
     if(ret == 0){
-        fprintf(stdout, "adopt lock: name -> %s\n", name);
+        fprintf(stdout, "adopt lock success --> name: %s, lkid: %d, status: %d\n", name, lksb.sb_lkid, lksb.sb_status);
     }
     else if(ret == -1 && errno == -EAGAIN){
-        fprintf(stderr, "%s: %s, try again\n", __func__, strerror(errno));
+        fprintf(stderr, "adopt lock failed --> name: %s, reason: %s, try again\n", name, strerror(errno));
         return false;
     }
     else if (ret < 0) {
-        fprintf(stderr, "%s: %s\n", __func__, strerror(errno));
+        fprintf(stderr, "adopt lock failed --> name: %s, reason: %s, try again\n", name, strerror(errno));
         return false;
     }
 
