@@ -31,6 +31,8 @@
  * complete
  */
 
+#define _REENTRANT // for `dlm_ls_pthread_init`
+
 #include <stdint.h>
 #include <errno.h>
 #include <stdio.h>
@@ -52,6 +54,7 @@
 #define LOCKSPACE_NAME     "ADOPT_TEST"
 #define LOCKSPACE_MODE     0600
 #define DLM_FILE           "dlmlock"
+#define STATUS             "STATUS"
 #define RESOURCE_NAME      "RESOURCE_NAME"
 #define LOCK_ID            "LOCK_ID"
 #define LOCK_MODE          "LOCK_MODE"
@@ -72,9 +75,10 @@ bool dlm_running(void);
 bool setup_lockspace(void);
 bool setup_dlm_lockfile(void);
 bool write_lock(struct lock *lk);
+bool write_unlock(uint32_t lkid);
 
 char *to_mode_text(uint32_t mode);
-struct lock *create_lock(struct list_head *lk_list);
+struct lock *create_lock(struct lock *lk);
 void free_lock(struct lock *lk);
 
 int main(int argc, char *argv[]){
@@ -146,7 +150,7 @@ int main(int argc, char *argv[]){
                 }
                 else{
                     fprintf(stdout, "result --> lock success\n lkid --> %d, status --> %d\n", lksb.sb_lkid, lksb.sb_status);
-                    lk = create_lock(&lk_list);
+//                    lk = create_lock(name, mode, lkid, vm_pid);
                     if(lk != NULL){
                         lk->mode = to_mode_text(mode);
                         lk->lkid = lksb.sb_lkid;
@@ -161,21 +165,20 @@ int main(int argc, char *argv[]){
                 break;
             default:
                 fprintf(stdout, "action --> unlock\n");
-                flags = 0;
-                ret = dlm_ls_unlock_wait(lockspace, lkid, flags, &lksb);
-                if(ret != 0){
-                    fprintf(stderr, "%s: dlm_ls_unlock_wait %s\n", __func__, strerror(errno));
-                }
-                else{
-                    line = 1;
-                    list_for_each_entry(lk, &lk_list, entry){
-                        if(lk->lkid == lkid){
-                            free_lock(lk);
-                            break;
+                list_for_each_entry(lk, &lk_list, entry){
+                    if((!strcmp(lk->name, name)) && (lk->lkid == lkid)){
+                        flags = 0;
+                        ret = dlm_ls_unlock_wait(lockspace, lkid, flags, &lksb);
+                        if(ret != 0){
+                            fprintf(stderr, "dlm_ls_unlock_wait: %s, name: %s lkid: %d, status: %d\n", strerror(errno), name, lkid, lksb.sb_status);
                         }
-                        line++;
+                        else{
+                            fprintf(stdout, "unlock success, name --> %s, lkid --> %d, status: %d\n", name, lkid, lksb.sb_status);
+                            write_unlock(lkid);
+                        }
+                        free_lock(lk);
+                        break;
                     }
-                    // TODO
                 }
                 break;
         }
@@ -218,6 +221,7 @@ char *to_mode_text(uint32_t mode){
             return "LKM_EXMODE";
     }
 }
+
 uint32_t to_mode_uint(const char * mode){
     if(strcmp(mode, "LKM_PRMODE") == 0)
         return LKM_PRMODE;
@@ -259,6 +263,7 @@ bool get_local_nodeid(unsigned int *nodeid){
 bool adopt_lock(char *raw){
     char *str, *subtoken, *saveptr;
     int i, ret;
+    int status;
     char *name;
     pid_t vm_pid;
     uint32_t mode;
@@ -268,27 +273,34 @@ bool adopt_lock(char *raw){
     };
     struct lock *lk;
 
-    for(i=0, str=raw; ; str=NULL, i++){
+    for(i=0, status=0, str=raw; ; str=NULL, i++){
         subtoken = strtok_r(str, " \n", &saveptr);
         if(subtoken == NULL)
             break;
 
         switch(i){
             case 0:
-                name = strdup(subtoken);
+                status = atoi(subtoken);
                 break;
             case 1:
-                lksb.sb_lkid = atoi(subtoken);
+                name = strdup(subtoken);
                 break;
             case 2:
-                mode = to_mode_uint(subtoken);
+                lksb.sb_lkid = atoi(subtoken);
+                if(lksb.sb_lkid == 0) // if non-digit, return 0. For example: '123 123' --> 123, 'abcd' --> 0
+                    return false;
                 break;
             case 3:
+                mode = to_mode_uint(subtoken);
+                break;
+            case 4:
                 vm_pid = atoi(subtoken);
                 break;
             default:
                 break;
         }
+        if(status == 0)
+            break;
     }
     if(i != 4)
         return false;
@@ -371,12 +383,35 @@ bool write_lock(struct lock *lk){
         fprintf(stderr, "%s: %s\n", __func__, strerror(errno));
         return false;
     }
-    snprintf(buf, BUFSIZ-1, "%32s %10d %10s %10d\n", lk->name, lk->lkid, to_mode_text(lk->mode), lk->vm_pid);
+    snprintf(buf, BUFSIZ-1, "%6d %32s %10d %10s %10d\n", 1, lk->name, lk->lkid, to_mode_text(lk->mode), lk->vm_pid);
     write(fd, buf, strlen(buf));
 
     fdatasync(fd);
 
+    close(fd);
     return true;
+}
+
+bool write_unlock(uint32_t lkid){
+    int fd;
+    char buf[BUFSIZ] = {0};
+    off_t offset;
+
+    fd = open(DLM_FILE_PATH, O_RDWR);
+    if(fd < 0){
+        fprintf(stderr, "%s: %s\n", __func__, strerror(errno));
+        return false;
+    }
+    // calculate offset
+    offset = 11 + (6+32+10+10+10+5)*lkid;
+    lseek(fd, offset, SEEK_SET);
+    snprintf(buf, BUFSIZ-1, "%6d", 0);
+    write(fd, buf, strlen(buf));
+    fdatasync(fd);
+
+    close(fd);
+    return true;
+    
 }
 
 bool initialize_dlm_lockfile(void){
@@ -389,11 +424,11 @@ bool initialize_dlm_lockfile(void){
         fprintf(stderr, "%s: %s\n", __func__, strerror(errno));
         return false;
     }
-    snprintf(buf, BUFSIZ-1, "%d\n%32s %10s %10s %10s\n", getpid(), RESOURCE_NAME, LOCK_ID, LOCK_MODE, QEMU_PID); 
+    snprintf(buf, BUFSIZ-1, "%10d\n%6s %32s %10s %10s %10s\n", getpid(), STATUS, RESOURCE_NAME, LOCK_ID, LOCK_MODE, QEMU_PID); 
     write(fd, buf, strlen(buf));
     if(!list_empty(&lk_list)){
         list_for_each_entry(lk, &lk_list, entry){
-            snprintf(buf, BUFSIZ-1, "%32s %10d %10s %10d\n", lk->name, lk->lkid, to_mode_text(lk->mode), lk->vm_pid);
+            snprintf(buf, BUFSIZ-1, "%6d %32s %10d %10s %10d\n", 1, lk->name, lk->lkid, to_mode_text(lk->mode), lk->vm_pid);
             write(fd, buf, strlen(buf));
         }
     }
@@ -420,7 +455,7 @@ bool setup_dlm_lockfile(void){
 
     return true;
 }
-
+/*
 struct lock *create_lock(struct list_head *lk_list){
     struct lock *lk = NULL;
 
@@ -433,7 +468,7 @@ struct lock *create_lock(struct list_head *lk_list){
 
     return lk;
 }
-
+*/
 void free_lock(struct lock *lk){
     list_del(&lk->entry);
 

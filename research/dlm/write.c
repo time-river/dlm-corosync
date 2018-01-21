@@ -41,5 +41,10 @@ int main(int argc, char *argv[]){
     offset = 40+32+3+2+(30+32+3+1)*2;
     fsetpos(fp, &offset);
     write(fd, buf, strlen(buf));
+
+    offset = 40+32+3+2+(30+32+3+1)*7;
+    fsetpos(fp, &offset);
+    snprintf(buf, BUFSIZ-1, "%32s %10d %10s %10d\n", "123456789", 123456, "123456", 123456);
+    write(fd, buf, strlen(buf));
     return 0;
 }
