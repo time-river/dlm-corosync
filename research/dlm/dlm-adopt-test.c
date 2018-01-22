@@ -75,8 +75,9 @@ struct lock {
     pid_t vm_pid;
 };
 
-static struct list_head lk_list;
-static dlm_lshandle_t ls;
+static struct list_head lk_list = {NULL};
+static dlm_lshandle_t ls = NULL;
+static pid_t vm_pid = 1;
 
 char *to_mode_text(uint32_t mode);
 uint32_t to_mode_uint(const char *mode);
@@ -102,16 +103,21 @@ int main(int argc, char *argv[]){
         return 0;
     }
 
-    setup_lockspace();
-    setup_lockfile();
+    if(setup_lockspace()){
+        DEBUG_LOG(stderr, "setup_lockspace error");
+        return 0;
+    }
+    if(setup_lockfile()){
+        DEBUG_LOG(stderr, "setup_lockfile error");
+        return 0;
+    }
 
     int raw_name, raw_mode, op;
-    pid_t vm_pid = 121;
-    char *name;
+    char *name = NULL;
     uint32_t mode, flags, lkid;
     struct dlm_lksb lksb;
     int ret, line;
-    struct lock *lk;
+    struct lock *lk = NULL;
     int fd;
 
     while(true){
@@ -154,8 +160,8 @@ int main(int argc, char *argv[]){
                 }
                 else{
                     DEBUG_LOG(stdout, "result --> lock success\n lkid --> %d, status --> %d", lksb.sb_lkid, lksb.sb_status);
-                    record_lock(name, mode, lksb.sb_lkid, vm_pid);
-                    fd = open(DLM_FILE_PATH, O_RDWR|O_APPEND);
+                    record_lock(name, mode, lksb.sb_lkid, vm_pid++);
+                    fd = open(DLM_FILE_PATH, O_RDWR);
                     write_lock(list_last_entry(&lk_list, struct lock, entry), fd, 1);
                     close(fd);
                 }
@@ -164,9 +170,10 @@ int main(int argc, char *argv[]){
                 fprintf(stdout, "action --> unlock\n");
                 int fd = open(DLM_FILE_PATH, O_RDWR);
                 list_for_each_entry(lk, &lk_list, entry){
+                    DEBUG_LOG(stdout, "lkid --> %d", lk->lkid);
                     if((!strcmp(lk->name, name)) && (lk->lkid == lkid)){
                         ret = dlm_ls_unlock_wait(ls, lkid, 0, &lksb);
-                        if(!ret || !lksb.sb_status){
+                        if(ret){
                             fprintf(stderr, "dlm_ls_unlock_wait: %s, name: %s lkid: %d, status: %d\n", strerror(errno), name, lkid, lksb.sb_status);
                         }
                         else{
@@ -304,7 +311,7 @@ int adopt_lock(char *raw){
             break;
     }
 
-    if(i != 5 || status == 0)
+    if(i != 4 || status == 0)
         goto out;
 
     // TODO: check process
@@ -338,7 +345,7 @@ int init_empty_lockfile(void){
     int fd;
     char buf[BUFSIZ] = {0};
 
-    fd = open(DLM_FILE_PATH, O_WRONLY|O_CREAT|O_TRUNC);
+    fd = open(DLM_FILE_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0644);
     if(fd < 0){
         DEBUG_LOG(stderr, "%s", strerror(errno));
         return -1;
@@ -353,13 +360,13 @@ int init_empty_lockfile(void){
 }
 
 int prep_lk_list(void){
-    FILE *fp;
-    pid_t previous;
-    int line;
-    ssize_t count;
-    size_t n;
-    char *buf;
-    uint32_t nodeid;
+    FILE *fp = NULL;
+    pid_t previous = 0;
+    int line = 0;
+    ssize_t count = 0;
+    size_t n = 0;
+    char *buf = NULL;
+    uint32_t nodeid = 0;
     int ret = -1;
   
     if(!access(DLM_FILE_PATH, F_OK)){
@@ -397,8 +404,8 @@ out:
 }
 
 int dump_lk_list(void){
-    int fd;
-    struct lock *lk;
+    int fd = -1;
+    struct lock *lk = NULL;
 
     fd = open(DLM_FILE_PATH, O_WRONLY|O_CREAT|O_TRUNC);
     if(fd < 0){
@@ -406,7 +413,7 @@ int dump_lk_list(void){
         return -1;
     }
 
-    dprintf(fd, "%10d\n%6s %32s %9s %10s", \
+    dprintf(fd, "%10d\n%6s %32s %9s %10s\n", \
               getpid(), STATUS, RESOURCE_NAME, LOCK_MODE, QEMU_PID);
     list_for_each_entry(lk, &lk_list, entry){
         write_lock(lk, fd, 1);
@@ -434,14 +441,14 @@ int setup_lockfile(void){
 
 int write_lock(const struct lock *lk, int fd, int status){
     char buf[BUFSIZ] = {0};
-    off_t offset, ret;
+    off_t offset, ret = 0;
 
     /* <pid>\n
      *    10 1
-     * STATUS LOCK_ID RESOURCE_NAME LOCK_MODE QEMU_PID
-     *      6      10            32         9       10        
+     * STATUS RESOURCE_NAME LOCK_MODE QEMU_PID
+     *      6            32         9       10        
      */
-    offset = 10 + 1 + (6+1+10+1+32+1+9+1+10+1) * lk->lkid;
+    offset = calculate_offset(lk->lkid);
     ret = lseek(fd, offset, SEEK_SET);
     if(ret == -1){
         DEBUG_LOG(stderr, "%s", strerror(errno));
@@ -477,7 +484,7 @@ void record_lock(const char *name, const uint32_t mode, const uint32_t lkid, con
 }
 
 void delete_lock(struct lock *lk){
-    int fd;
+    int fd = -1;
 
     list_del(&lk->entry);
 
@@ -494,9 +501,9 @@ void delete_lock(struct lock *lk){
 }
 
 off_t calculate_offset(uint32_t id){
-    off_t offset;
+    off_t offset = 0;
     
-    offset = 10 + 1 + (6+1+10+1+32+1+9+1+10+1) * id;
+    offset = 10 + 1 + (6+1+32+1+9+1+10+1) * id;
 
     return offset;
 }
