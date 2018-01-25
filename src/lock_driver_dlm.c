@@ -1,8 +1,19 @@
 #define _REENTRANT
 
-#include "lock_driver.h"
-#include "list.h"
+#include <config.h>
+
+#inlcude <stdint.h>
+#include <errno.h>
+#include <Stdio.h>
+
 #include <libdlm.h>
+#include "list.h"
+
+#include "lock_driver.h"
+#include "viralloc.h"
+#include "virerror.h"
+#include "virfile.h"
+#include "virstring.h"
 
 #define DLM_LOCKSPACE_MODE  0600
 #define DLM_LOCKSPACE_NAME  "libvirt"
