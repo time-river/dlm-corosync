@@ -6,6 +6,7 @@
 
 #define DLM_LOCKSPACE_MODE  0600
 #define DLM_LOCKSPACE_NAME  "libvirt"
+#define DLM_FILE_PATH       "/tmp/dlmfile"
 
 #define PRMODE  "PRMODE"
 #define EXMODE  "EXMODE"
@@ -14,7 +15,7 @@
 #define RESOURCE_NAME      "RESOURCE_NAME"
 #define LOCK_ID            "LOCK_ID"
 #define LOCK_MODE          "LOCK_MODE"
-#define PID                "QEMU_PID"
+#define PID                "PID"
 
 /* This will be set after dlm_controld is started. */
 #define DLM_CLUSTER_NAME_PATH "/sys/kernel/config/dlm/cluster/cluster_name"
@@ -35,10 +36,10 @@ typedef virLockManagerDlmDriver *vir LockManagerDlmDriverPtr;
 
 struct _virLockInformation {
     struct list_head entry;
-    char *name;
+    char    *name;
     uint32_t mode;
     uint32_t lkid;
-    pid_t vm_pid;
+    pid_t   vm_pid;
 };
 
 struct _virLockManagerDlmResource {
@@ -51,7 +52,7 @@ struct _virLockManagerDlmPrivate {
     unsigned char vm_uuid[VIR_UUID_BUFLEN];
     char *vm_name;
     pid_t vm_pid;
-    int vm_id;
+    int   vm_id;
     const char *vm_uri;
 
     size_t nresources;
@@ -62,6 +63,7 @@ struct _virLockManagerDlmPrivate {
 
 struct _virLockManagerDlmDriver {
 	bool adoptLock;
+    int  lockspaceMode;
 	char *lockspaceName;
     char *dlmFilePath;
 };
@@ -104,17 +106,17 @@ static int virLockManagerDlmLoadConfig(const char *configFile)
     return ret;
 }
 
-static int virLockManagerToModeUint(const char *token)
+static int virLockManagerDlmToModeUint(const char *token)
 {
-    if (!strcmp(mode, PRMODE))
+    if (STREQ(mode, PRMODE))
         return LKM_PRMODE;
-    if (!strcmp(mode, EXMODE))
+    if (STREQ(mode, EXMODE))
         return LKM_EXMODE;
 
     return 0;
 }
 
-static char *virLockManagerToModeText(const uint32_t mode)
+static char *virLockManagerDlmToModeText(const uint32_t mode)
 {
     switch (mode) {
     case LKM_PRMODE:
@@ -126,17 +128,18 @@ static char *virLockManagerToModeText(const uint32_t mode)
     }
 }
 
-static void virLockManagerRecordLock(const char *name, const uint32_t mode
-                                     const uint32_t lkid, const pid_t vm_pid)
+static virLockInformationPtr virLockManagerDlmRecordLock(const char *name,
+                                                         const uint32_t mode
+                                                         const uint32_t lkid,
+                                                         const pid_t vm_pid)
 {
     virLockInformationPtr lock = NULL;
-    int fd;
 
     if (VIR_ALLOC(lock) < 0)
-       return;
+        goto error;
 
     if (VIR_STRDUP(lock->name, name) < 0)
-       return; 
+        goto error;
 
     lock->mode = mode;
     lock->lkid = lkid;
@@ -144,11 +147,18 @@ static void virLockManagerRecordLock(const char *name, const uint32_t mode
 
     list_add_tail(&lock->entry, &lockList);
 
-    return;
+    VIR_DEBUG("record lock sucessfully, lockId: %d", lkid);
+
+    return lock;
+
+ error:
+    if (lock)
+        VIR_FREE(lock);
+    return NULL;
 }
 
-static void virLockManagerWriteLock(const virLockInformationPtr lock, const int fd,
-                                    const bool status)
+static void virLockManagerDlmWriteLock(const virLockInformationPtr lock,
+                                       const int fd, const bool status)
 {
     char buffer[BUFSIZ] = {0};
     off_t offet = 0, ret = 0;
@@ -179,7 +189,7 @@ static void virLockManagerWriteLock(const virLockInformationPtr lock, const int 
     return;
 }
 
-static void virLockManagerAdoptLock(char *raw) {
+static void virLockManagerDlmAdoptLock(char *raw) {
     char *str = NULL, *subtoken = NULL, *saveptr = NULL;
     int i = 0, status = 0;
     char *name = NULL;
@@ -187,6 +197,7 @@ static void virLockManagerAdoptLock(char *raw) {
     struct dlm_lksb lksb = {0};
     pid_t vm_pid;
 
+    /* STATUS RESOURCE_NAME LOCK_MODE PID */
     for (i = 0, str = raw, status = 0; ; str = NULL, i++) {
         subtoken = strtok_r(str, " \n", &saveptr);
         if (subtoken == NULL)
@@ -201,7 +212,7 @@ static void virLockManagerAdoptLock(char *raw) {
                 status = 0;
             break;
         case 2:
-            mode = virLockManagerToModeUint(subtoken);
+            mode = virLockManagerDlmToModeUint(subtoken);
             if (!mode)
                 status = 0;
             break;
@@ -227,11 +238,13 @@ static void virLockManagerAdoptLock(char *raw) {
                           (void *)1, (void *)1, (void *)1,
                           NULL, NULL);
     if (status) {
-        virReportSystemError(errno, "%s",
-                             _("adopt lock failed"));
+        virReportSystemError(errno,
+                             _("adopt lock failed, lock name: %s lock mode: %s"),
+                             name, NULLSTR(virLockManagerDlmToModeText(mode)));
+        goto out;
     }
 
-    virLockManagerRecordLock(name, mode, lksb.sb_lkid, vm_pid);
+    virLockManagerDlmRecordLock(name, mode, lksb.sb_lkid, vm_pid);
 
     return;
 
@@ -242,21 +255,44 @@ static void virLockManagerAdoptLock(char *raw) {
     return;
 }
 
-static int virLockManagerPrepareLockfile(const char *dlmFilePath, const bool adoptLock)) {
-    FILE *fp;
+static int virLockManagerDlmGetLocalNodeId(uint32_t &nodeId)
+{
+    cpg_handle_t handle = 0;
+
+    if (cpg_model_initialize(&handle, CPG_MODEL_V1, NULL, NULL) != CS_OK) {
+		// 	TODO
+		return -1;
+    }
+    
+	if( cpg_local_get(handle, nodeid) != CS_OK) {
+		// TODO
+        return -1;
+    }
+
+    VIR_DEBUG("nodeid: %d", *nodeid);
+
+    if (cpg_finalize(handle) != CS_OK) {
+		// TODO
+	}
+
+	return 0;
+}
+
+static int virLockManagerDlmPrepareLockfile(const char *dlmFilePath, const bool adoptLock)) {
+    FILE *fp = NULL;
     int line = 0;
-    ssize_t count = 0;
     size_t n = 0;
+    ssize_t count = 0;
     pid_t previous = 0;
     char *buffer = NULL;
-    uint32_t nodeid = 0;
+    uint32_t nodeId = 0;
     int ret = -1;
 
     if (!access(dlmFilePath, F_OK)) {
         fp = fopen(dlmFile, "r");
         if (!fp) {
             virReportSystemError(errno, "%s",
-                                 _("open dlm lockfile failed"));
+                                 _("open %s failed", dlmFilePath));
             goto out;
         }
 
@@ -274,7 +310,7 @@ static int virLockManagerPrepareLockfile(const char *dlmFilePath, const bool ado
             case 1:
                 break;
             default:
-                virLockManagerAdoptLock(buffer);
+                virLockManagerDlmAdoptLock(buffer);
                 break;
             }
 
@@ -284,8 +320,10 @@ static int virLockManagerPrepareLockfile(const char *dlmFilePath, const bool ado
 
         VIR_FREE(buffer);
 
-        if (adoptLock && !virLockManagerGetNodeid(&nodeid))
-            dlm_ls_purge(lockspace, nodeid, previous);
+        if (!virLockManagerDlmGetLocalNodeId(&nodeId))
+            if (dlm_ls_purge(lockspace, nodeId, previous))
+				// TODO
+				VIR_DEBUG("dlm_ls_purge error.");
         }
 
     }
@@ -296,7 +334,7 @@ static int virLockManagerPrepareLockfile(const char *dlmFilePath, const bool ado
     return ret;
 }
 
-static int virLockManagerDumpLockfile(const char *dlmFilePath)
+static int virLockManagerDlmDumpLockfile(const char *dlmFilePath)
 {
     virLockInformationPtr lock = NULL;
     char buffer[BUFSIZ] = {0};
@@ -312,9 +350,8 @@ static int virLockManagerDumpLockfile(const char *dlmFilePath)
     snprintf(buffer, sizeof(buffer), "%10d\n%6s %32s %9s %10s\n" \
              getpid(), STATUS, RESOURCE_NAME, LOCK_MODE, PID);
     if (safewrite(fd, buffer, strlen(buffer)) != strlen(buffer)) {
-        virReportSystemError(VIR_ERR_OPERATION_FAILED,
+        virReportSystemError(errno,
                              _("failed to write file, '%s'"), dlmFilePath);
-        ret = -errno;
         goto out;
     }
 
@@ -327,28 +364,28 @@ static int virLockManagerDumpLockfile(const char *dlmFilePath)
     return ret;
 }
 
-static int virLockManagerSetupLockfile(const char *dlmFilePath, const bool adoptLock)
+static int virLockManagerDlmSetupLockFile(const char *dlmFilePath, const bool adoptLock)
 {
-    if (virLockManagerPrepareLockfile(dlmFilePath, adoptLock)) {
-        virReportSystemError(VIR_ERR_INTERNAL_ERROR, "%s",
-                             _("dlm prepare lockfile failed"));
+    if (virLockManagerDlmPrepareLockfile(dlmFilePath, adoptLock)) {
+        virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
+                       _("dlm prepare lockfile failed"));
         return -1;
     }
 
-    if (virLockManagerDumpLockfile(dlmFilePath)) {
-        virReportSystemError(VIR_ERR_INTERNAL_ERROR, "%s",
-                             ("dlm dump lockfile failed"));
+    if (virLockManagerDlmDumpLockfile(dlmFilePath)) {
+        virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
+                       _("dlm dump lockfile failed"));
         return -1;
     }
 
     return 0;
 }
 
-static int virLockManagerDlmSetupDlm(virLockManagerDlmDriverPtr driver)
+static int virLockManagerDlmSetup(virLockManagerDlmDriverPtr driver)
 {
     int ret = -1;
 
-    list_head_init(&lk_list);
+    list_head_init(&lockList);
 
     /* check dlm is running */
     if (access(DLM_CLUSTER_PATH, F_OK)) {
@@ -357,12 +394,12 @@ static int virLockManagerDlmSetupDlm(virLockManagerDlmDriverPtr driver)
     }
 
     /* open lockspace */
-    lockspace = dlm_open_lockspace(DLM_LOCKSPACE_NAME);
+    lockspace = dlm_open_lockspace(driver->lockspaceName);
     if (!lockspace)
-        lockspace = dlm_create_lockspace(DLM_LOCKSPACE_NAME, DLM_LOCKSPACE_MODE);
+        lockspace = dlm_create_lockspace(driver->lockspaceName, driver->lockspaceMode);
     if (!lockspace) {
         virReportSystemError(errno, "%s",
-                             _("dlm create lockspace failed"));
+                             _("dlm can't open lockspace, and crate failed"));
     }
 
     if (dlm_ls_pthread_init(lockspace)) {
@@ -371,9 +408,9 @@ static int virLockManagerDlmSetupDlm(virLockManagerDlmDriverPtr driver)
                                  _("dlm thread initialize failed"));
     }
 
-    if (virLockManagerSetupLockfile(driver->dlmFilePath, driver->adoptLock)) {
-        virReportSystemError(VIR_ERR_INTERNAL_ERROR, "%s",
-                             _("setup lockfile failed"));
+    if (virLockManagerDlmSetupLockFile(driver->dlmFilePath, driver->adoptLock)) {
+        virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
+                       _("setup dlm lockfile failed"));
     }
 
 }
@@ -389,7 +426,7 @@ static int virLockManagerDlmInit(unsigned int version,
     virCheckFlags(0, -1);
 
     if (geteuid() != 0) {
-        virReportError(VIR_ERR_INTERNAL_ERROR,
+        virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
                        _("Dlm lock requires superuser privileges"));
         return -1;
     }
@@ -401,7 +438,7 @@ static int virLockManagerDlmInit(unsigned int version,
         return -1;
 
     driver->adoptLock = true;
-    driver->mode = DLM_MODE;
+    driver->lockspaceMode = DLM_LOCKSPACE_MODE;
 
     if (VIR_STRDUP(driver->lockspaceName, DLM_LOCKSPACE_NAME) < 0)
         goto cleanup;
@@ -412,17 +449,17 @@ static int virLockManagerDlmInit(unsigned int version,
     if (virLockManagerDlmLoadConfig(configFile) < 0)
         goto cleanup;
 
-    if (virLockManagerDlmSetupDlm(driver) < 0)
+    if (virLockManagerDlmSetup(driver) < 0)
         goto cleanup;
 
     return 0;
 
  cleanup:
-    virLockManagerLockDaemonDeinit();
+    virLockManagerLockDlmDeinit();
     return -1;
 }
 
-static int virLockManagerLockDaemonDeinit(void)
+static int virLockManagerLockDlmDeinit(void)
 {
     if (!driver)
         return 0;
@@ -748,7 +785,7 @@ static int virLockManagerDlmInquire(virLockManagerPtr lock ATTRIBUTED_UNSED,
     return 0;
 }
 
-struct _virLockManagerDlmDriver
+struct_virLockManagerDlmDriver
 virLockDriver virLockDriverImpl =
 {
     .version = VIR_LOCK_MANAGER_VERSION,
