@@ -163,6 +163,12 @@ static void virLockManagerDlmWriteLock(const virLockInformationPtr lock,
     char buffer[BUFSIZ] = {0};
     off_t offet = 0, ret = 0;
 
+    if (!lock) {
+        virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
+                       _("lock is NULL"));
+        return;
+    }
+
     /* <pid>\n
      *    10 1
      * STATUS RESOURCE_NAME LOCK_MODE      PID
@@ -244,7 +250,9 @@ static void virLockManagerDlmAdoptLock(char *raw) {
         goto out;
     }
 
-    virLockManagerDlmRecordLock(name, mode, lksb.sb_lkid, vm_pid);
+    if (!virLockManagerDlmRecordLock(name, mode, lksb.sb_lkid, vm_pid)) {
+        // TODO: record adopt failed
+    }
 
     return;
 
@@ -484,6 +492,10 @@ static int virLockManagerDlmNew(virLockManagerPtr lock,
     size_t i;
 
     virCheckFlags(VIR_LOCK_MANAGER_NEW_STATED, -1);
+    /* flags related:
+     *   https://libvirt.org/git/?p=libvirt.git;a=commit;h=da879e592142291709f7b95b9218d32bb1869d1a
+     *   https://libvirt.org/git/?p=libvirt.git;a=commit;h=54972be8430c709a338c0716ebc48b02be25dcb7
+     */
 
     if (!driver) {
         virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
@@ -516,7 +528,6 @@ static int virLockManagerDlmNew(virLockManagerPtr lock,
             virReportError(VIR_ERR_INTERNAL_ERROR,
                            _("Unexpected parameter %s for object"),
                            params[i].key);
-
         }
     }
 
@@ -525,13 +536,15 @@ static int virLockManagerDlmNew(virLockManagerPtr lock,
     if (!priv->name) {
         virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
                        _("Missing name parameter for domain object"));
-        return -1;
+        goto cleanup;
     }
 
     lock->privateData = priv;
     return 0;
 
  cleanup:
+    if (priv)
+        VIR_FREE(priv->vm_name);
     VIR_FREE(priv);
     return -1;
 }
@@ -546,11 +559,14 @@ static void virLockManagerDlmFree(virLockManagerPtr lock)
 
     for (i = 0; i < priv->nresources; i++) {
    		VIR_FREE(priv->resources[i].vm_name);
-// TODO 
+        // TODO ?
     }
 
+    VIR_FREE(priv->resources);
     VIR_FREE(priv);
     lock->privateData = NULL;
+
+    return;
 }
 
 static int virLockManagerDlmAddResource(virLockManagerPtr lock,
@@ -570,10 +586,23 @@ static int virLockManagerDlmAddResource(virLockManagerPtr lock,
     if (flags & VIR_LOCK_MANAGER_RESOURCE_READONLY)
         return 0;
 
+    /* don't diff 'VIR_LOCK_MANAGER_RESOURCE_TYPE_DISK' and 'VIR_LOCK_MANAGER_RESOURCE_TYPE_LEASE'
+     *  http://ssdxiao.github.io/linux/2017/04/12/Libvirt-Sanlock.html
+     *  https://libvirt.org/formatdomain.html#elementsLease
+     *  https://libvirt.org/git/?p=libvirt.git;a=commit;h=1ea83207c815e12b1ef60f48a4663e12fbc59687
+     *  https://www.redhat.com/archives/libvir-list/2011-May/msg01539.html
+     */
     switch (type) {
     case VIR_LOCK_MANAGER_RESOURCE_TYPE_DISK:
         /* https://libvirt.org/git/?p=libvirt.git;a=commit;h=97e4f21782b49f6147a5fc5092740948fc89ede9
          */
+            if (params || narams) {
+                virReportError(VIR_ERR_INITERNAL_ERROR, "%s",
+                               _("Unexpected parameters for disk resource"));
+                return -1;
+            }
+
+            // TODO: check this
             if (!(flags & (VIR_LOCK_MANAGER_RESOURCE_SHARED |
                            VIR_LOCK_MANAGER_RESOURCE_READONLY))) {
                 priv->hasRWDisks = true;
@@ -581,16 +610,15 @@ static int virLockManagerDlmAddResource(virLockManagerPtr lock,
                 return 0;
             }
 
-            if (params || narams) {
-                virReportError(VIR_ERR_INITERNAL_ERROR, "%s",
-                               _("Unexpected parameters for disk resource"));
-            }
-
             if (virCryptoHashString(VIR_CRYPTO_HASH_SHA256, name, &newName) < 0)
                 goto cleanup;
+
         break;
 
     case VIR_LOCK_MANAGER_RESOURCE_TYPE_LEASE:
+        /* TODO: name must less 64 bytes
+         * not implement 'offset'
+         */
         if (VIR_STRDUP(newName, name) < 0)
             goto cleanup;
         break;
@@ -605,8 +633,7 @@ static int virLockManagerDlmAddResource(virLockManagerPtr lock,
     if (VIR_EXPAND_N(priv->resources, priv->nresources, 1) < 0)
         goto cleanup;
 
-    if (VIR_STRDUP(priv->resources[priv->nresources-1].name, newName) < 0)
-        goto cleanup;
+    priv->resources[priv->nresources-1].name = newName;
 
     if (!!(flags & VIR_LOCK_MANAGER_RESOURCE_SHARED))
         priv->resources[priv->nresources-1].mode = LKM_PRMODE;
@@ -638,9 +665,12 @@ static int virLockManagerDlmAcquire(virLockManagerPtr lock,
     virCheckFlags(VIR_LOCK_MANAGER_ACQUIRE_REGISTER_ONLY |
                   VIR_LOCK_MANAGER_ACQUIRE_RESTRICT, -1);
 
+    /* requireLeaseForDisks related:
+     *  https://libvirt.org/git/?p=libvirt.git;a=commit;h=58eb4f2cbbb17b1afa1a9e0766a87f25aa895b73
+     *  https://libvirt.org/git/?p=libvirt.git;a=commit;h=97e4f21782b49f6147a5fc5092740948fc89ede9
+     */
     if (priv->nresources == 0 &&
-        priv->hasRWDisks &&
-        driver->requireLeaseForDisks) {
+        priv->hasRWDisks) {
         virReportError(VIR_ERR_CONFIG_UNSUPPORTED, "%s",
                        _("Read/write, exclusive access, disks were present, but no leases specified"));
         return -1;
@@ -655,12 +685,20 @@ static int virLockManagerDlmAcquire(virLockManagerPtr lock,
      */
 
     if(!lockspace) {
-        VIR_DEBUG("Process not open lockspace, skipping release");
+        VIR_DEBUG("Process not open dlm lockspace, skipping release");
         goto cleanup;
     }
 
+    /* readonly not acquire lock */
     if (!(flags & VIR_LOCK_MANAGER_ACQUIRE_REGISTER_ONLY)) {
         VIR_DEBUG("Acquiring object %u", priv->nresources);
+
+        fd = open(driver->dlmFilePath, O_RDWR);
+        if (fd < 0) {
+            virReportSystemError(errno,
+                           _("fail open %s"), driver->dlmFilePath));
+            goto cleanup;
+        }
 
         for (i = 0; i < priv->nresources; i++) {
             VIR_DEBUG("Acquiring object %u", priv->nresources);
@@ -673,38 +711,40 @@ static int virLockManagerDlmAcquire(virLockManagerPtr lock,
             if (!rv || !lksb.sb_status) {
                 virReportError(errno,
                                _("Failed to acquire lock"));
-                goto error;
+                goto cleanup;
+                // FIXME: when failed ???
             }
 
-            lock = virLockManagerRecordLock(priv->resources[i].name, priv->resources[i].mode,
-                                            lksb.sb_lkid, priv->resources[i].vm_pid);
-            if (!lock)
+            lock = virLockManagerDlmRecordLock(priv->resources[i].name, priv->resources[i].mode,
+                                               lksb.sb_lkid, priv->resources[i].vm_pid);
+            if (!lock) {
                 // TODO
-            fd = open(driver->dlmFilePath, O_RDWR);
-            if (fd < 0) {
-                virReportError(errno,
-                               _("fail open %s", driver->dlmFilePath));
-                goto error;
+                VIR_DEBUG("virLockManagerDlmRecordLock failed");
+                goto cleanup;
             }
-            virLockManagerWriteLock(lock, fd, 1);
+            virLockManagerDlmWriteLock(lock, fd, 1);
         }
+
+        VIR_CLOSE(fd);
     }
 
     if (flags & VIR_LOCK_MANAGER_ACQUIRE_RESTRICT) {
         /* 
          * https://libvirt.org/git/?p=libvirt.git;a=commit;h=ebfb8c42434dd4d9f4852db2fde612351da500f7
          */
-        dlm_close_lockspace(lockspace);
+        dlm_close_lockspace(lockspace); // always return 0, so ignore return value
         lockspace = NULL;
     }
 
     rv = 0;
 
- error:
+ cleanup:
+    if (rv && fd)
+        VIR_FORCE_CLOSE(fd);
     return rv;
 }
 
-static void virLockManagerDeleteLock(const virLockInformationPtr lock, const char *dlmFilePath)
+static void virLockManagerDlmDeleteLock(const virLockInformationPtr lock, const char *dlmFilePath)
 {
     int fd = -1;
 
@@ -758,8 +798,9 @@ static int virLockManagerDlmRelease(virLockManagerPtr lock,
                     break;
                 }
                 else {
-                    virReportError(errno,
-                                   _("dlm unlock failed, lock id: %d", lock->lkid));
+                    virReportSystemError(errno,
+                                         _("dlm unlock failed, lock name: %s, lock id: %d"),
+                                         lock->name, lock->lkid);
                     goto cleanup;
                 }
             }
