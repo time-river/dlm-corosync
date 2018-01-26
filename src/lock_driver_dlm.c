@@ -404,6 +404,7 @@ static int virLockManagerDlmSetup(virLockManagerDlmDriverPtr driver)
 {
     int ret = -1;
 
+
     list_head_init(&lockList);
 
     /* check dlm is running */
@@ -419,19 +420,27 @@ static int virLockManagerDlmSetup(virLockManagerDlmDriverPtr driver)
     if (!lockspace) {
         virReportSystemError(errno, "%s",
                              _("dlm can't open lockspace, and crate failed"));
+        goto out;
     }
 
     if (dlm_ls_pthread_init(lockspace)) {
-        if (errno != EEXIST)
+        if (errno != EEXIST) {
             virReportSystemError(errno, "%s",
                                  _("dlm thread initialize failed"));
+            goto out;
+        }
     }
 
     if (virLockManagerDlmSetupLockFile(driver->dlmFilePath, driver->adoptLock)) {
         virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
                        _("setup dlm lockfile failed"));
+        goto out;
     }
 
+    ret = 0;
+
+ out:
+    return ret;
 }
 
 static int virLockManagerDlmDeinit(void);
