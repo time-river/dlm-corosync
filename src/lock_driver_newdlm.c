@@ -130,10 +130,9 @@ static int virLockManagerDlmInit(unsigned int version,
 
     virCheckFlags(0, -1);
 
-    /* TODO: need to check daemon have previleges */
-    if (checkDaemonPrevileges() < 0) {
+    if (geteuid() != 0) {
         virReportError(VIR_ERR_INTERNAL_ERROR,
-                _("Dlm lock requires daemon has superuser privileges"));
+                       _("Dlm lock requires daemon has superuser privilege"));
         return -1;
     }
 

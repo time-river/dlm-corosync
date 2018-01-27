@@ -98,6 +98,9 @@ static int virLockManagerDlmLoadConfig(const char *configFile)
     virConfPtr conf = NULL;
     int ret = -1;
 
+    if (!configFile)
+        return 0; // it would works well eventhough configfile does not exist.
+
     if (access(configFile, R_OK) == -1) {
         if (errno != ENOENT) {
             virReportSystemError(errno,
