@@ -1,0 +1,40 @@
+diff --git a/m4/virt-cpg.m4 b/m4/virt-cpg.m4
+new file mode 100644
+index 000000000..b96cc9071
+--- /dev/null
++++ b/m4/virt-cpg.m4
+@@ -0,0 +1,11 @@
++AC_DEFUN([LIBVIRT_ARG_CPG],[
++  LIBVIRT_ARG_WITH_FEATURE([CPG], [cluster engine CPG library], [check])
++])
++
++AC_DEFUN([LIBVIRT_CHECK_CPG],[
++  LIBVIRT_CHECK_PKG([CPG], [libcpg], [2.0.0])
++])
++
++AC_DEFUN([LIBVIRT_RESULT_CPG],[
++  LIBVIRT_RESULT_LIB([CPG])
++])
+diff --git a/m4/virt-dlm.m4 b/m4/virt-dlm.m4
+new file mode 100644
+index 000000000..238037d1b
+--- /dev/null
++++ b/m4/virt-dlm.m4
+@@ -0,0 +1,17 @@
++AC_DEFUN([LIBVIRT_ARG_DLM],[
++  LIBVIRT_ARG_WITH_FEATURE([DLM], [Distributed Lock Manager library], [check])
++])
++
++AC_DEFUN([LIBVIRT_CHECK_DLM],[
++  AC_REQUIRE([LIBVIRT_CHECK_CPG])
++  LIBVIRT_CHECK_PKG([DLM], [libdlm], [4.0.0])
++
++  if test "x$with_dlm" == "xyes" && test "x$with_cpg" != "xyes"; then
++    AC_MSG_ERROR([You must install libcpg to build dlm lock])
++  fi
++])
++
++AC_DEFUN([LIBVIRT_RESULT_DLM],[
++  AC_REQUIRE([LIBVIRT_RESULT_CPG])
++  LIBVIRT_RESULT_LIB([DLM])
++])
