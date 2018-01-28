@@ -185,7 +185,7 @@ static virLockInformationPtr virLockManagerDlmRecordLock(const char *name,
 
  error:
     if (lock)
-        VIR_FREE(lock);
+        VIR_FREE(lock->name);
     return NULL;
 }
 
@@ -193,6 +193,8 @@ static void virLockManagerDlmWriteLock(virLockInformationPtr lock, int fd, bool 
 {
     char buffer[BUFFERLEN] = {0};
     off_t offset = 0, ret = 0;
+
+    virReportError(VIR_ERR_INTERNAL_ERROR, _("lock name=%s lock id=%d"), lock->name, lock->lkid);
 
     if (!lock) {
         virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
@@ -214,12 +216,15 @@ static void virLockManagerDlmWriteLock(virLockInformationPtr lock, int fd, bool 
     }
     
     snprintf(buffer, sizeof(buffer), "%6d %32s %9s %10jd\n", \
-             status, lock->name, virLockManagerDlmToModeText(lock->mode), (intmax_t)lock->vm_pid);
+             status, lock->name, NULLSTR(virLockManagerDlmToModeText(lock->mode)), (intmax_t)lock->vm_pid);
     if (safewrite(fd, buffer, strlen(buffer) != strlen(buffer))) {
         virReportSystemError(errno, "%s",
                              _("write lock failed"));
         return;
     }
+
+    VIR_DEBUG("write '%s'", buffer);
+    virReportError(VIR_ERR_INTERNAL_ERROR, _("write %s"), buffer);
 
     fdatasync(fd);
 
@@ -378,7 +383,7 @@ static int virLockManagerDlmDumpLockfile(const char *dlmFilePath)
 {
     virLockInformationPtr lock = NULL;
     char buffer[BUFFERLEN] = {0};
-    int fd = -1, ret = -1;
+    int fd = -1, rv = -1;
 
     fd = open(dlmFilePath, O_WRONLY|O_CREAT|O_TRUNC, DLM_FILE_MODE);
     if (fd < 0) {
@@ -386,7 +391,7 @@ static int virLockManagerDlmDumpLockfile(const char *dlmFilePath)
                              _("open dlm file failed"));
         return -1;
     }
-    
+
     snprintf(buffer, sizeof(buffer), "%10jd\n%6s %32s %9s %10s\n", \
              (intmax_t)getpid(), STATUS, RESOURCE_NAME, LOCK_MODE, PID);
     if (safewrite(fd, buffer, strlen(buffer)) != strlen(buffer)) {
@@ -399,10 +404,18 @@ static int virLockManagerDlmDumpLockfile(const char *dlmFilePath)
         virLockManagerDlmWriteLock(lock, fd, 1);
     }
 
-    ret = 0;
+    if (VIR_CLOSE(fd) < 0) {
+        virReportSystemError(errno,
+                             _("Unable to save file %s"),
+                             dlmFilePath);
+        goto out;
+    }
+
+    rv = 0;
  out:
-    VIR_FORCE_CLOSE(fd);
-    return ret;
+    if (rv)
+        VIR_FORCE_CLOSE(fd);
+    return rv;
 }
 
 static int virLockManagerDlmSetupLockFile(const char *dlmFilePath, const bool newLockspace, const bool adoptLock)
@@ -755,15 +768,25 @@ static int virLockManagerDlmAcquire(virLockManagerPtr lock,
 
             theLock = virLockManagerDlmRecordLock(priv->resources[i].name, priv->resources[i].mode,
                                                lksb.sb_lkid, priv->resources[i].vm_pid);
-            if (!lock) {
+            if (!theLock) {
                 // TODO
-                VIR_DEBUG("virLockManagerDlmRecordLock failed");
+                virReportError(VIR_ERR_INTERNAL_ERROR,
+                               _("Fail record lock, resourceName=%s lockId = %d vm_pid=%jd"),
+                               NULLSTR(priv->resources[i].name),
+                               lksb.sb_lkid,
+                               (intmax_t)priv->resources[i].vm_pid);
                 goto cleanup;
             }
+
             virLockManagerDlmWriteLock(theLock, ifd, 1);
         }
 
-        VIR_FORCE_CLOSE(ifd);
+        if(VIR_CLOSE(ifd) < 0) {
+            virReportSystemError(errno,
+                                 _("Unable to save file %s"),
+                                driver->dlmFilePath);
+            goto cleanup;
+        }
     }
 
     if (flags & VIR_LOCK_MANAGER_ACQUIRE_RESTRICT) {
@@ -777,6 +800,8 @@ static int virLockManagerDlmAcquire(virLockManagerPtr lock,
     rv = 0;
 
  cleanup:
+    if (rv)
+        VIR_FORCE_CLOSE(ifd);
     return rv;
 }
 
@@ -793,9 +818,14 @@ static void virLockManagerDlmDeleteLock(const virLockInformationPtr lock, const 
         goto cleanup;
     }
     virLockManagerDlmWriteLock(lock, fd, 0); 
+    if (VIR_CLOSE(fd) < 0) {
+        virReportSystemError(errno,
+                             _("Unable to save file %s"),
+                             dlmFilePath);
+        VIR_FORCE_CLOSE(fd);
+    }
 
  cleanup:
-    VIR_FORCE_CLOSE(fd);
     VIR_FREE(lock->name);
     VIR_FREE(lock);
 }
