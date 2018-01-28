@@ -596,11 +596,6 @@ static void virLockManagerDlmFree(virLockManagerPtr lock)
         return;
 
     for (i = 0; i < priv->nresources; i++) {
-        FILE *fp = fopen("/tmp/libvirt-test", "a+");
-        VIR_DEBUG("priv->resources[%zu].name=%s", i, NULLSTR(priv->resources[i].name));
-        fprintf(fp, "priv->resources[%zu].name=%s", i, NULLSTR(priv->resources[i].name));
-        fflush(fp);
-        fclose(fp);
    		VIR_FREE(priv->resources[i].name);
         // TODO ?
     }
@@ -750,9 +745,10 @@ static int virLockManagerDlmAcquire(virLockManagerPtr lock,
                                   &lksb, LKF_NOQUEUE|LKF_PERSISTENT,
                                   priv->resources[i].name, strlen(priv->resources[i].name),
                                   0, NULL, NULL, NULL);
-            if (!rv || !lksb.sb_status) {
-                virReportError(errno,
-                               _("Failed to acquire lock"));
+            if (rv || lksb.sb_status) { // normally, rv == 0 means sucess, however there is wrong in some situations, maybe dlm bug?
+                virReportSystemError(errno, 
+                                     _("Failed to acquire lock, rv=%d lksb.sb_status=%d"),
+                                     rv, lksb.sb_status);
                 goto cleanup;
                 // FIXME: when failed ???
             }
