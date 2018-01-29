@@ -66,7 +66,6 @@ struct _virLockInformation {
 struct _virLockManagerDlmResource {
     char *name;
     uint32_t mode;
-    pid_t vm_pid;
 };
 
 struct _virLockManagerDlmPrivate {
@@ -767,14 +766,14 @@ static int virLockManagerDlmAcquire(virLockManagerPtr lock,
             }
 
             theLock = virLockManagerDlmRecordLock(priv->resources[i].name, priv->resources[i].mode,
-                                               lksb.sb_lkid, priv->resources[i].vm_pid);
+                                               lksb.sb_lkid, priv->vm_pid);
             if (!theLock) {
                 // TODO
                 virReportError(VIR_ERR_INTERNAL_ERROR,
                                _("Fail record lock, resourceName=%s lockId = %d vm_pid=%jd"),
                                NULLSTR(priv->resources[i].name),
                                lksb.sb_lkid,
-                               (intmax_t)priv->resources[i].vm_pid);
+                               (intmax_t)priv->vm_pid);
                 goto cleanup;
             }
 
@@ -857,7 +856,7 @@ static int virLockManagerDlmRelease(virLockManagerPtr lock,
         resource = priv->resources + i;
 
         list_for_each_entry (theLock, &lockList, entry) {
-            if((theLock->vm_pid == resource->vm_pid) &&
+            if((theLock->vm_pid == priv->vm_pid) &&
                     STREQ(theLock->name, resource->name) &&
                     (theLock->mode == resource->mode)) {
                 rv = dlm_ls_unlock_wait(lockspace, theLock->lkid, 0, &lksb);
