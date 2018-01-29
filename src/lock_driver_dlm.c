@@ -19,6 +19,7 @@
 #include "virfile.h"
 #include "virlog.h"
 #include "virstring.h"
+#include "virthread.c"
 
 #define VIR_FROM_THIS VIR_FROM_LOCKING
 
@@ -92,6 +93,7 @@ struct _virLockManagerDlmDriver {
 
 static virLockManagerDlmDriverPtr driver = NULL;
 static dlm_lshandle_t lockspace = NULL;
+static virMutex mutex;
 static struct list_head lockList;
 
 static int virLockManagerDlmLoadConfig(const char *configFile)
@@ -176,8 +178,11 @@ static virLockInformationPtr virLockManagerDlmRecordLock(const char *name,
     lock->lkid = lkid;
     lock->vm_pid = vm_pid;
 
+    virMutexLock(&mutex);
     list_add_tail(&lock->entry, &lockList);
+    virMutexUnlock(&mutex);
 
+    virReportError(VIR_ERR_INTERNAL_ERROR, _("list_empty=%d"), list_empty(&lockList));
     VIR_DEBUG("record lock sucessfully, lockId: %d", lkid);
 
     return lock;
@@ -191,9 +196,9 @@ static virLockInformationPtr virLockManagerDlmRecordLock(const char *name,
 static void virLockManagerDlmWriteLock(virLockInformationPtr lock, int fd, bool status)
 {
     char buffer[BUFFERLEN] = {0};
-    off_t offset = 0, ret = 0;
+    off_t offset = 0, rv = 0;
 
-    virReportError(VIR_ERR_INTERNAL_ERROR, _("lock name=%s lock id=%d"), lock->name, lock->lkid);
+    virReportError(VIR_ERR_INTERNAL_ERROR, _("lockName=%s lockId=%d"), lock->name, lock->lkid);
 
     if (!lock) {
         virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
@@ -203,27 +208,31 @@ static void virLockManagerDlmWriteLock(virLockInformationPtr lock, int fd, bool 
 
     /* <pid>\n
      *    10 1
-     * STATUS RESOURCE_NAME LOCK_MODE      PID
-     *      6            32         9       10        
+     * STATUS RESOURCE_NAME LOCK_MODE      PID\n
+     *      6            32         9       10  
+     * 61 = 10 + 1 \
+     *     + 6 + 1 +32 + 1 + 9 + 1 + 10 +1
      */
     offset = 11 + 61 * lock->lkid;
-	ret = lseek(fd, offset, SEEK_SET);
-	if (ret < 0) {
+	rv = lseek(fd, offset, SEEK_SET);
+	if (rv < 0) {
 		virReportSystemError(errno, "%s",
 							 _("lseek failed"));
         return;
     }
     
     snprintf(buffer, sizeof(buffer), "%6d %32s %9s %10jd\n", \
-             status, lock->name, NULLSTR(virLockManagerDlmToModeText(lock->mode)), (intmax_t)lock->vm_pid);
-    if (safewrite(fd, buffer, strlen(buffer) != strlen(buffer))) {
+             status, lock->name,
+             NULLSTR(virLockManagerDlmToModeText(lock->mode)),
+             (intmax_t)lock->vm_pid);
+    virReportError(VIR_ERR_INTERNAL_ERROR, _("write %s length=%zu to fd=%d"), buffer, strlen(buffer), fd);
+    if (safewrite(fd, buffer, strlen(buffer) != 61)) {
         virReportSystemError(errno, "%s",
                              _("write lock failed"));
         return;
     }
 
     VIR_DEBUG("write '%s'", buffer);
-    virReportError(VIR_ERR_INTERNAL_ERROR, _("write %s"), buffer);
 
     fdatasync(fd);
 
@@ -280,7 +289,7 @@ static void virLockManagerDlmAdoptLock(char *raw) {
                           NULL, NULL);
     if (status) {
         virReportSystemError(errno,
-                             _("adopt lock failed, lock name: %s lock mode: %s"),
+                             _("adopt lock failed, lockName=%s lockMode=%s"),
                              name, NULLSTR(virLockManagerDlmToModeText(mode)));
         goto out;
     }
@@ -661,7 +670,7 @@ static int virLockManagerDlmAddResource(virLockManagerPtr lock,
                 }
             }
 
-            if (virCryptoHashString(VIR_CRYPTO_HASH_SHA256, name, &newName) < 0)
+            if (virCryptoHashString(VIR_CRYPTO_HASH_MD5, name, &newName) < 0)
                 goto cleanup;
 
         break;
@@ -808,7 +817,9 @@ static void virLockManagerDlmDeleteLock(const virLockInformationPtr lock, const 
 {
     int fd = -1;
 
+    virMutexLock(&mutex);
     list_del(&lock->entry);
+    virMutexUnlock(&mutex);
 
     fd = open(dlmFilePath, O_RDWR);
     if (fd < 0) {
@@ -850,15 +861,17 @@ static int virLockManagerDlmRelease(virLockManagerPtr lock,
         goto cleanup;
     }
 
+    virReportError(VIR_ERR_INTERNAL_ERROR, _("priv->nresources=%zu lockListEmpty=%d"), priv->nresources, list_empty(&lockList));
     for (i = 0; i < priv->nresources; i++) {
         /* https://libvirt.org/git/?p=libvirt.git;a=commit;h=8dc93ffadcca0cc9813ba04036b7139922c55400
          */
         resource = priv->resources + i;
 
         list_for_each_entry (theLock, &lockList, entry) {
-            if((theLock->vm_pid == priv->vm_pid) &&
-                    STREQ(theLock->name, resource->name) &&
-                    (theLock->mode == resource->mode)) {
+            virReportError(VIR_ERR_INTERNAL_ERROR, _("lockName=%s lockId=%d, vm_pid=%jd"), theLock->name, theLock->lkid, (intmax_t)theLock->vm_pid);
+            if(STREQ(theLock->name, resource->name) &&
+               (theLock->mode == resource->mode)) {
+                /* lock is held by another process, so whether `theLock->vm_pid == priv->vm_pid` or not is nothing */
                 rv = dlm_ls_unlock_wait(lockspace, theLock->lkid, 0, &lksb);
                 if (!rv) {
                     virLockManagerDlmDeleteLock(theLock, driver->dlmFilePath);
@@ -866,7 +879,7 @@ static int virLockManagerDlmRelease(virLockManagerPtr lock,
                 }
                 else {
                     virReportSystemError(errno,
-                                         _("dlm unlock failed, lock name: %s, lock id: %d"),
+                                         _("dlm unlock failed, lockName=%s, lockId=%d"),
                                          theLock->name, theLock->lkid);
                     goto cleanup;
                 }
