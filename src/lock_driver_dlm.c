@@ -373,12 +373,16 @@ static int virLockManagerDlmPrepareLockfile(const char *dlmFilePath, const bool 
                 break;
         }
 
-        if (!virLockManagerDlmGetLocalNodeId(&nodeId))
+        if (!virLockManagerDlmGetLocalNodeId(&nodeId)) {
             if (dlm_ls_purge(lockspace, nodeId, previous)) {
 				// TODO
 				VIR_DEBUG("dlm_ls_purge error.");
             }
-
+            else {
+                virReportError(VIR_ERR_INTERNAL_ERROR,
+                               _("dlm_ls_purge success, nodeId=%u previous=%jd"), nodeId, (intmax_t)previous);
+            }
+        }
         fclose(fp);
         VIR_FREE(buffer);
     }
@@ -770,6 +774,7 @@ static int virLockManagerDlmAcquire(virLockManagerPtr lock,
                 virReportSystemError(errno, 
                                      _("Failed to acquire lock, rv=%d lksb.sb_status=%d"),
                                      rv, lksb.sb_status);
+                rv = -1;
                 goto cleanup;
                 // FIXME: when failed ???
             }
@@ -777,12 +782,13 @@ static int virLockManagerDlmAcquire(virLockManagerPtr lock,
             theLock = virLockManagerDlmRecordLock(priv->resources[i].name, priv->resources[i].mode,
                                                lksb.sb_lkid, priv->vm_pid);
             if (!theLock) {
-                // TODO
+                // TODO, need unlock ?
                 virReportError(VIR_ERR_INTERNAL_ERROR,
                                _("Fail record lock, resourceName=%s lockId = %d vm_pid=%jd"),
                                NULLSTR(priv->resources[i].name),
                                lksb.sb_lkid,
                                (intmax_t)priv->vm_pid);
+                rv = -1;
                 goto cleanup;
             }
 
@@ -868,21 +874,22 @@ static int virLockManagerDlmRelease(virLockManagerPtr lock,
         resource = priv->resources + i;
 
         list_for_each_entry (theLock, &lockList, entry) {
-            virReportError(VIR_ERR_INTERNAL_ERROR, _("lockName=%s lockId=%d, vm_pid=%jd"), theLock->name, theLock->lkid, (intmax_t)theLock->vm_pid);
             if(STREQ(theLock->name, resource->name) &&
                (theLock->mode == resource->mode)) {
                 /* lock is held by another process, so whether `theLock->vm_pid == priv->vm_pid` or not is nothing */
+                virReportError(VIR_ERR_INTERNAL_ERROR, _("find Lock, lockName=%s lockId=%d, vm_pid=%jd"), theLock->name, theLock->lkid, (intmax_t)theLock->vm_pid);
                 rv = dlm_ls_unlock_wait(lockspace, theLock->lkid, 0, &lksb);
                 if (!rv) {
                     virLockManagerDlmDeleteLock(theLock, driver->dlmFilePath);
                     break;
                 }
-                else {
+                else { // TODO: when lock doesn't exist
                     virReportSystemError(errno,
                                          _("dlm unlock failed, lockName=%s, lockId=%d"),
                                          theLock->name, theLock->lkid);
                     goto cleanup;
                 }
+                break;
             }
         }
     }
