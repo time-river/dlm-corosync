@@ -374,7 +374,7 @@ static int virLockManagerDlmPrepareLockfile(const char *dlmFilePath, const bool 
         }
 
         if (!virLockManagerDlmGetLocalNodeId(&nodeId)) {
-            if (dlm_ls_purge(lockspace, nodeId, previous)) {
+            if (dlm_ls_purge(lockspace, nodeId, 0)) {
 				// TODO
 				VIR_DEBUG("dlm_ls_purge error.");
             }
@@ -770,7 +770,8 @@ static int virLockManagerDlmAcquire(virLockManagerPtr lock,
                                   &lksb, LKF_NOQUEUE|LKF_PERSISTENT,
                                   priv->resources[i].name, strlen(priv->resources[i].name),
                                   0, NULL, NULL, NULL);
-            if (rv || lksb.sb_status) { // normally, rv == 0 means sucess, however there is wrong in some situations, maybe dlm bug?
+            if (rv || lksb.sb_status) {
+                // TODO: more human wrong report -- status==11(EAGAIN) means 'LKF_NOQUEUE was requested and the lock could not be granted'
                 virReportSystemError(errno, 
                                      _("Failed to acquire lock, rv=%d lksb.sb_status=%d"),
                                      rv, lksb.sb_status);
