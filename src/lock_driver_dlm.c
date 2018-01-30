@@ -258,7 +258,7 @@ static void virLockManagerDlmAdoptLock(char *raw) {
             status = atoi(subtoken);
             break;
         case 1:
-            if (VIR_STRDUP(subtoken, name) != 1)
+            if (VIR_STRDUP(name, subtoken) != 1)
                 status = 0;
             break;
         case 2:
@@ -298,6 +298,8 @@ static void virLockManagerDlmAdoptLock(char *raw) {
         // TODO: record adopt failed
     }
 
+    virReportError(VIR_ERR_INTERNAL_ERROR,
+                  _("adopt lock, lockName=%s lockId=%d"), name, lksb.sb_lkid);
     return;
 
  out:
@@ -756,7 +758,7 @@ static int virLockManagerDlmAcquire(virLockManagerPtr lock,
     if (!(flags & VIR_LOCK_MANAGER_ACQUIRE_REGISTER_ONLY)) {
         VIR_DEBUG("Acquiring object %zu", priv->nresources);
 
-        ifd = open(driver->dlmFilePath, O_RDWR|O_APPEND);
+        ifd = open(driver->dlmFilePath, O_RDWR);
         if (ifd < 0) {
             virReportSystemError(errno, _("fail open %s"), driver->dlmFilePath);
             goto cleanup;
