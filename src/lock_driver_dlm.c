@@ -20,6 +20,7 @@
 #include "virlog.h"
 #include "virstring.h"
 #include "virthread.c"
+#include "viruuid.h"
 
 #define VIR_FROM_THIS VIR_FROM_LOCKING
 
@@ -62,6 +63,8 @@ struct _virLockInformation {
     uint32_t mode;
     uint32_t lkid;
     pid_t   vm_pid;
+    char   *vm_name;
+    char   *vm_name;
 };
 
 struct _virLockManagerDlmResource {
@@ -406,8 +409,8 @@ static int virLockManagerDlmDumpLockfile(const char *dlmFilePath)
         return -1;
     }
 
-    snprintf(buffer, sizeof(buffer), "%10jd\n%6s %32s %9s %10s\n", \
-             (intmax_t)getpid(), STATUS, RESOURCE_NAME, LOCK_MODE, VM_PID);
+    snprintf(buffer, sizeof(buffer), "%6s %32s %9s %10s\n", \
+                    STATUS, RESOURCE_NAME, LOCK_MODE, VM_PID, VM_NAME);
     if (safewrite(fd, buffer, strlen(buffer)) != strlen(buffer)) {
         virReportSystemError(errno,
                              _("failed to write file, '%s'"), dlmFilePath);
@@ -601,14 +604,18 @@ static int virLockManagerDlmNew(virLockManagerPtr lock,
         }
     }
 
-    if (priv->vm_pid == 0)
-        VIR_DEBUG("Missing PID parameter for domain object");
+    if (priv->vm_pid == 0) {
+        virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
+                       _("Missing PID parameter for domain object"));
+        return -1;
+    }
     if (!priv->vm_name) {
         virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
                        _("Missing name parameter for domain object"));
         return -1;
     }
 
+    virReportError(VIR_ERR_INTERNAL_ERROR, "vm_name=%s", priv->vm_name);
     lock->privateData = priv;
 
     return 0;
