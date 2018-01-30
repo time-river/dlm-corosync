@@ -26,7 +26,7 @@
 #define DLM_LOCKSPACE_MODE  0600
 #define DLM_LOCKSPACE_NAME  "libvirt"
 #define DLM_FILE_PATH       "/tmp/dlmfile"
-#define DLM_FILE_MODE       0600
+#define DLM_FILE_MODE       0644
 
 #define PRMODE  "PRMODE"
 #define EXMODE  "EXMODE"
@@ -35,7 +35,7 @@
 #define RESOURCE_NAME      "RESOURCE_NAME"
 #define LOCK_ID            "LOCK_ID"
 #define LOCK_MODE          "LOCK_MODE"
-#define PID                "PID"
+#define VM_PID             "VM_PID"
 
 #define BUFFERLEN          128
 
@@ -226,7 +226,7 @@ static void virLockManagerDlmWriteLock(virLockInformationPtr lock, int fd, bool 
              NULLSTR(virLockManagerDlmToModeText(lock->mode)),
              (intmax_t)lock->vm_pid);
     virReportError(VIR_ERR_INTERNAL_ERROR, _("write %s length=%zu to fd=%d"), buffer, strlen(buffer), fd);
-    if (safewrite(fd, buffer, strlen(buffer) != 61)) {
+    if (safewrite(fd, buffer, strlen(buffer)) != 61) {
         virReportSystemError(errno, "%s",
                              _("write lock failed"));
         return;
@@ -405,7 +405,7 @@ static int virLockManagerDlmDumpLockfile(const char *dlmFilePath)
     }
 
     snprintf(buffer, sizeof(buffer), "%10jd\n%6s %32s %9s %10s\n", \
-             (intmax_t)getpid(), STATUS, RESOURCE_NAME, LOCK_MODE, PID);
+             (intmax_t)getpid(), STATUS, RESOURCE_NAME, LOCK_MODE, VM_PID);
     if (safewrite(fd, buffer, strlen(buffer)) != strlen(buffer)) {
         virReportSystemError(errno,
                              _("failed to write file, '%s'"), dlmFilePath);
@@ -756,7 +756,7 @@ static int virLockManagerDlmAcquire(virLockManagerPtr lock,
     if (!(flags & VIR_LOCK_MANAGER_ACQUIRE_REGISTER_ONLY)) {
         VIR_DEBUG("Acquiring object %zu", priv->nresources);
 
-        ifd = open(driver->dlmFilePath, O_RDWR);
+        ifd = open(driver->dlmFilePath, O_RDWR|O_APPEND);
         if (ifd < 0) {
             virReportSystemError(errno, _("fail open %s"), driver->dlmFilePath);
             goto cleanup;
@@ -875,7 +875,8 @@ static int virLockManagerDlmRelease(virLockManagerPtr lock,
         resource = priv->resources + i;
 
         list_for_each_entry (theLock, &lockList, entry) {
-            if(STREQ(theLock->name, resource->name) &&
+            if((theLock->vm_pid == priv->vm_pid) &&
+               STREQ(theLock->name, resource->name) &&
                (theLock->mode == resource->mode)) {
                 /* lock is held by another process, so whether `theLock->vm_pid == priv->vm_pid` or not is nothing */
                 virReportError(VIR_ERR_INTERNAL_ERROR, _("find Lock, lockName=%s lockId=%d, vm_pid=%jd"), theLock->name, theLock->lkid, (intmax_t)theLock->vm_pid);
