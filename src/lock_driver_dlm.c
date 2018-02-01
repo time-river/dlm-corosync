@@ -18,7 +18,6 @@
 #include "virerror.h"
 #include "virfile.h"
 #include "virlog.h"
-#include "virprocess.h"
 #include "virstring.h"
 #include "virthread.h"
 
@@ -37,9 +36,8 @@
 #define LOCK_ID            "LOCK_ID"
 #define LOCK_MODE          "LOCK_MODE"
 #define VM_PID             "VM_PID"
-#define VM_HASH_NAME       "VM_HASH_NAME"
 
-#define BUFFERLEN          192
+#define BUFFERLEN          128
 
 /* This will be set after dlm_controld is started. */
 #define DLM_CLUSTER_NAME_PATH "/sys/kernel/config/dlm/cluster/cluster_name"
@@ -63,8 +61,7 @@ struct _virLockInformation {
     char    *name;
     uint32_t mode;
     uint32_t lkid;
-    pid_t   vm_pid;
-    char   *vm_hashName;
+    pid_t   vm_pid; // used for judging whether process hold the lock
 };
 
 struct _virLockManagerDlmResource {
@@ -92,8 +89,6 @@ struct _virLockManagerDlmDriver {
 	bool adoptLock;
 	char *lockspaceName;
     char *dlmFilePath;
-
-    char *stateDir; // src/qemu/qemu_conf.c +170
 };
 
 static virLockManagerDlmDriverPtr driver = NULL;
@@ -166,24 +161,20 @@ static const char *virLockManagerDlmToModeText(const uint32_t mode)
     }
 }
 
-static virLockInformationPtr virLockManagerDlmRecordLock(const virLockManagerDlmPrivatePtr priv,
-                                                         const size_t i,
-                                                         const dlm_lksb *lksb)
+static virLockInformationPtr virLockManagerDlmRecordLock(char *name, uint32_t mode,
+                                                         uint32_t lkid, pid_t vm_pid)
 {
     virLockInformationPtr lock = NULL;
 
     if (VIR_ALLOC(lock) < 0)
         goto error;
 
-    if (VIR_STRDUP(lock->name, priv.resources[i].name) < 0)
+    if (VIR_STRDUP(lock->name, name) < 0)
         goto error;
 
-    if (virCryptoHashString(VIR_CRYPTO_HASH_SHA256, priv->vm_name, &priv->vm_hashName) < 0)
-        goto cleanup;
-
-    lock->mode = lksb->mode;
-    lock->lkid = lksb->lkid;
-    lock->vm_pid = priv-vm_pid;
+    lock->mode = mode;
+    lock->lkid = lkid;
+    lock->vm_pid = vm_pid;
 
     virMutexLock(&mutex);
     list_add_tail(&lock->entry, &lockList);
@@ -202,7 +193,7 @@ static virLockInformationPtr virLockManagerDlmRecordLock(const virLockManagerDlm
 
 static void virLockManagerDlmWriteLock(virLockInformationPtr lock, int fd, bool status)
 {
-    char *buffer[BUFFERLEN] = {0};
+    char buffer[BUFFERLEN] = {0};
     off_t offset = 0, rv = 0;
 
     virReportError(VIR_ERR_INTERNAL_ERROR, _("lockName=%s lockId=%d"), lock->name, lock->lkid);
@@ -214,11 +205,11 @@ static void virLockManagerDlmWriteLock(virLockInformationPtr lock, int fd, bool 
     }
 
     /* 
-     * STATUS RESOURCE_NAME LOCK_MODE VM_PID VM_HASHN_AME\n
-     *      6            64         9     10           64
-     * 158 = 6 + 1 + 64 + 1 + 9 + 1 + 10 + 1 + 64 + 1
+     * STATUS RESOURCE_NAME LOCK_MODE VM_PID\n
+     *      6            64         9     10
+     * 94 = 6 + 1 + 64 + 1 + 9 + 1 + 10 + 1
      */
-    offset = 158 * lock->lkid;
+    offset = 94 * lock->lkid;
 	rv = lseek(fd, offset, SEEK_SET);
 	if (rv < 0) {
 		virReportSystemError(errno, "%s",
@@ -226,13 +217,12 @@ static void virLockManagerDlmWriteLock(virLockInformationPtr lock, int fd, bool 
         return;
     }
     
-    snprintf(buffer, sizeof(buffer), "%6d %64s %9s %10jd %64s\n", \
+    snprintf(buffer, sizeof(buffer), "%6d %64s %9s %10jd\n", \
              status, lock->name,
              NULLSTR(virLockManagerDlmToModeText(lock->mode)),
-             (intmax_t)lock->vm_pid,
-             NULLSTR(lock->vm_hashName));
+             (intmax_t)lock->vm_pid);
     virReportError(VIR_ERR_INTERNAL_ERROR, _("write %s length=%zu to fd=%d"), buffer, strlen(buffer), fd);
-    if (safewrite(fd, buffer, strlen(buffer)) != 61) {
+    if (safewrite(fd, buffer, strlen(buffer)) != 94) {
         virReportSystemError(errno, "%s",
                              _("write lock failed"));
         return;
@@ -252,7 +242,6 @@ static void virLockManagerDlmAdoptLock(char *raw) {
     uint32_t mode = 0;
     struct dlm_lksb lksb = {0};
     pid_t vm_pid = 0;
-    char *vm_hashName = NULL;
 
     /* STATUS RESOURCE_NAME LOCK_MODE PID */
     for (i = 0, str = raw, status = 0; ; str = NULL, i++) {
@@ -262,7 +251,12 @@ static void virLockManagerDlmAdoptLock(char *raw) {
 
         switch(i) {
         case 0:
-            status = atoi(subtoken);
+            if (virStrToLong_i(subtoken, &saveptr, 10, &status) < 0) {
+                virReportError(VIR_ERR_INTERNAL_ERROR,
+                               _("cannot extract lock status '%s'"), subtoken);
+                status = 0;
+                goto out;
+            }
             break;
         case 1:
             if (VIR_STRDUP(name, subtoken) != 1)
@@ -274,13 +268,11 @@ static void virLockManagerDlmAdoptLock(char *raw) {
                 status = 0;
             break;
         case 3:
-            if (virStrToLong_i(vm_pid = atoi(subtoken);
-            if (!vm_pid)
+            if ((virStrToLong_i(subtoken, &saveptr, 10, &vm_pid) < 0) || !vm_pid) {
+                virReportError(VIR_ERR_INTERNAL_ERROR, 
+                               _("cannot extract lock vm_pid '%s'"), subtoken);
                 status = 0;
-            break;
-        case 4:
-            if (VIR_STRDUP(vm_hashName, subtoken) != 1)
-                status = 0;
+            }
             break;
         default:
             status = 0;
@@ -291,7 +283,7 @@ static void virLockManagerDlmAdoptLock(char *raw) {
             break;
     }
 
-    if (!status || i != 5)
+    if (!status || i != 4)
         goto out;
 
     status = dlm_ls_lockx(lockspace, mode, &lksb, LKF_PERSISTENT|LKF_ORPHAN,
@@ -305,7 +297,7 @@ static void virLockManagerDlmAdoptLock(char *raw) {
         goto out;
     }
 
-    if (!virLockManagerDlmRecordLock(priv, name, mode, lksb.sb_lkid, vm_pid)) {
+    if (!virLockManagerDlmRecordLock(name, mode, lksb.sb_lkid, vm_pid)) {
         // TODO: record adopt failed
     }
 
@@ -417,8 +409,8 @@ static int virLockManagerDlmDumpLockfile(const char *dlmFilePath)
         return -1;
     }
 
-    snprintf(buffer, sizeof(buffer), "%6s %64s %9s %10s %64s\n", \
-                    STATUS, RESOURCE_NAME, LOCK_MODE, VM_PID, VM_HASH_NAME);
+    snprintf(buffer, sizeof(buffer), "%6s %64s %9s %10s\n", \
+                    STATUS, RESOURCE_NAME, LOCK_MODE, VM_PID);
     if (safewrite(fd, buffer, strlen(buffer)) != strlen(buffer)) {
         virReportSystemError(errno,
                              _("failed to write file, '%s'"), dlmFilePath);
@@ -529,11 +521,11 @@ static int virLockManagerDlmInit(unsigned int version,
     driver->requireLeaseForDisks = !driver->autoDiskLease;
     driver->adoptLock = true;
 
-    if (virAsprintf(driver->lockspaceName, 
+    if (virAsprintf(&driver->lockspaceName, 
                   "%s", DLM_LOCKSPACE_NAME) < 0)
         goto cleanup;
 
-    if (virAsprintf(driver->dlmFilePath,
+    if (virAsprintf(&driver->dlmFilePath,
                   "%s", DLM_FILE_PATH) < 0)
         goto cleanup;
 
@@ -541,10 +533,6 @@ static int virLockManagerDlmInit(unsigned int version,
         goto cleanup;
 
     if (virLockManagerDlmSetup() < 0)
-        goto cleanup;
-
-    if (virAsprintf(driver->stateDir,
-                  "%s/cache/libvirt/qemu", LOCALSTATEDIR) < 0) < 0)
         goto cleanup;
 
     return 0;
@@ -564,7 +552,6 @@ static int virLockManagerDlmDeinit(void)
 
     VIR_FREE(driver->lockspaceName);
     VIR_FREE(driver->dlmFilePath);
-    VIR_FREE(driver->stateDir);
     VIR_FREE(driver);
 
     return 0;
@@ -738,33 +725,6 @@ static int virLockManagerDlmAddResource(virLockManagerPtr lock,
     return -1;
 }
 
-static int virLockManagerDlmPrepareAcquire(virLockManagerDlmPrivatePtr priv)
-{
-    pid_t vm_pid = 0;
-    char *hashName = NULL;
-    virLockInformationPtr theLock = NULL;
-
-    /*
-     * hash vm_name, aim: unique & constant length
-     */
-    if (virCryptoHashString(VIR_CRYPTO_HASH_SHA256, priv->vm_name, &hashName) < 0)
-        goto cleanup;
-
-    list_for_each_entry (theLock, &lockList, entry) {
-        if (STREQ(theLock->vm_hashName, hashName)) {
-            virLockManagerDlmDeleteLock(theLock, driver->dlmFilePath);
-            vm_pid = theLock->vm_pid; 
-        }
-    }
-
-    if (virProcessKillPainfully(vm_pid, true) < 0) {
-        virReportError(VIR_ERR_INTERNAL_ERROR, _("process %jd kill failed."), (intmax_t)vm_pid); 
-        return -1;
-    }
-    
-    return 0;
-}
-
 static int virLockManagerDlmAcquire(virLockManagerPtr lock,
                                     const char *state ATTRIBUTE_UNUSED,
                                     unsigned int flags,
@@ -817,9 +777,12 @@ static int virLockManagerDlmAcquire(virLockManagerPtr lock,
      * why set here?
      *  - parent process will run these code other than child process which will execv qemu
      *  - only in parent process that could be deleted lock in lockList
-     */ 
+     *
+     * not use now, reason:
+     *  auto release lock when qemu would be killed
         if (virLockManagerDlmPrepareAcquire(priv) < 0)
             goto cleanup;
+     */ 
 
         ifd = open(driver->dlmFilePath, O_RDWR);
         if (ifd < 0) {
@@ -848,7 +811,7 @@ static int virLockManagerDlmAcquire(virLockManagerPtr lock,
             theLock = virLockManagerDlmRecordLock(priv->resources[i].name, priv->resources[i].mode,
                                                lksb.sb_lkid, priv->vm_pid);
             if (!theLock) {
-                // TODO, not need unlock, virLockManagerPrepareAcqure will clean those useless lock
+                // TODO: unlock
                 virReportError(VIR_ERR_INTERNAL_ERROR,
                                _("Fail record lock, resourceName=%s lockId = %d vm_pid=%jd"),
                                NULLSTR(priv->resources[i].name),

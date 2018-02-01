@@ -1,0 +1,16 @@
+diff --git a/src/qemu/qemu_process.c b/src/qemu/qemu_process.c
+index 3a697de..c197d2d 100644
+--- a/src/qemu/qemu_process.c
++++ b/src/qemu/qemu_process.c
+@@ -6596,6 +6596,11 @@ void qemuProcessStop(virQEMUDriverPtr driver,
+ 
+     qemuProcessRemoveDomainStatus(driver, vm);
+ 
++    VIR_FREE(priv->lockState);
++    if (virDomainLockProcessPause(driver->lockManager, vm, &priv->lockState) < 0)
++        VIR_WARN("Unable to release lease on %s", vm->def->name);
++    VIR_DEBUG("Preserving lock state '%s'", NULLSTR(priv->lockState));
++
+     /* Remove VNC and Spice ports from port reservation bitmap, but only if
+        they were reserved by the driver (autoport=yes)
+     */
