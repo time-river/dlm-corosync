@@ -341,7 +341,6 @@ static int virLockManagerDlmPrepareLockfile(const char *dlmFilePath, const bool 
     int line = 0;
     size_t n = 0;
     ssize_t count = 0;
-    pid_t previous = 0;
     char *buffer = NULL;
     uint32_t nodeId = 0;
 
@@ -360,14 +359,6 @@ static int virLockManagerDlmPrepareLockfile(const char *dlmFilePath, const bool 
 
             switch (line) {
             case 0:
-                previous = atoi(buffer);
-                if (!previous) {
-                    virReportError(VIR_ERR_INTERNAL_ERROR,
-                                   _("%s file may be broken, please check and remove it."), dlmFilePath);
-                    return -1;
-                }
-                break;
-            case 1:
                 break;
             default:
                 virLockManagerDlmAdoptLock(buffer);
@@ -385,7 +376,7 @@ static int virLockManagerDlmPrepareLockfile(const char *dlmFilePath, const bool 
             }
             else {
                 virReportError(VIR_ERR_INTERNAL_ERROR,
-                               _("dlm_ls_purge success, nodeId=%u previous=%jd"), nodeId, (intmax_t)previous);
+                               _("dlm_ls_purge success, nodeId=%u "), nodeId);
             }
         }
         fclose(fp);
