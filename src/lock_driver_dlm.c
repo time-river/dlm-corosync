@@ -207,9 +207,9 @@ static void virLockManagerDlmWriteLock(virLockInformationPtr lock, int fd, bool 
     /* 
      * STATUS RESOURCE_NAME LOCK_MODE VM_PID\n
      *      6            64         9     10
-     * 94 = 6 + 1 + 64 + 1 + 9 + 1 + 10 + 1
+     * 93 = 6 + 1 + 64 + 1 + 9 + 1 + 10 + 1
      */
-    offset = 94 * lock->lkid;
+    offset = 93 * lock->lkid;
 	rv = lseek(fd, offset, SEEK_SET);
 	if (rv < 0) {
 		virReportSystemError(errno, "%s",
@@ -222,7 +222,7 @@ static void virLockManagerDlmWriteLock(virLockInformationPtr lock, int fd, bool 
              NULLSTR(virLockManagerDlmToModeText(lock->mode)),
              (intmax_t)lock->vm_pid);
     virReportError(VIR_ERR_INTERNAL_ERROR, _("write %s length=%zu to fd=%d"), buffer, strlen(buffer), fd);
-    if (safewrite(fd, buffer, strlen(buffer)) != 94) {
+    if (safewrite(fd, buffer, strlen(buffer)) != strlen(buffer)) {
         virReportSystemError(errno, "%s",
                              _("write lock failed"));
         return;
@@ -235,8 +235,14 @@ static void virLockManagerDlmWriteLock(virLockInformationPtr lock, int fd, bool 
     return;
 }
 
+static void virLockManagerDlmNone(void)
+{
+    // do nothing
+    return;
+}
+
 static void virLockManagerDlmAdoptLock(char *raw) {
-    char *str = NULL, *subtoken = NULL, *saveptr = NULL;
+    char *str = NULL, *subtoken = NULL, *saveptr = NULL, *endptr = NULL;
     int i = 0, status = 0;
     char *name = NULL;
     uint32_t mode = 0;
@@ -251,7 +257,7 @@ static void virLockManagerDlmAdoptLock(char *raw) {
 
         switch(i) {
         case 0:
-            if (virStrToLong_i(subtoken, &saveptr, 10, &status) < 0) {
+            if (virStrToLong_i(subtoken, &endptr, 10, &status) < 0) {
                 virReportError(VIR_ERR_INTERNAL_ERROR,
                                _("cannot extract lock status '%s'"), subtoken);
                 status = 0;
@@ -268,7 +274,7 @@ static void virLockManagerDlmAdoptLock(char *raw) {
                 status = 0;
             break;
         case 3:
-            if ((virStrToLong_i(subtoken, &saveptr, 10, &vm_pid) < 0) || !vm_pid) {
+            if ((virStrToLong_i(subtoken, &endptr, 10, &vm_pid) < 0) || !vm_pid) {
                 virReportError(VIR_ERR_INTERNAL_ERROR, 
                                _("cannot extract lock vm_pid '%s'"), subtoken);
                 status = 0;
@@ -288,7 +294,8 @@ static void virLockManagerDlmAdoptLock(char *raw) {
 
     status = dlm_ls_lockx(lockspace, mode, &lksb, LKF_PERSISTENT|LKF_ORPHAN,
                           name, strlen(name), 0,
-                          (void *)1, (void *)1, (void *)1,
+                          , (void *)1, (void *)1,
+          //                (void *)1, (void *)1, (void *)1,
                           NULL, NULL);
     if (status) {
         virReportSystemError(errno,
@@ -843,6 +850,9 @@ static void virLockManagerDlmDeleteLock(const virLockInformationPtr lock, const 
 {
     int fd = -1;
 
+    if (!lock)
+        return;
+
     virMutexLock(&mutex);
     list_del(&lock->entry);
     virMutexUnlock(&mutex);
@@ -898,8 +908,9 @@ static int virLockManagerDlmRelease(virLockManagerPtr lock,
                STREQ(theLock->name, resource->name) &&
                (theLock->mode == resource->mode)) {
                 /* lock is held by another process, so whether `theLock->vm_pid == priv->vm_pid` or not is nothing */
-                virReportError(VIR_ERR_INTERNAL_ERROR, _("find Lock, lockName=%s lockId=%d, vm_pid=%jd"), theLock->name, theLock->lkid, (intmax_t)theLock->vm_pid);
+                virReportError(VIR_ERR_INTERNAL_ERROR, _("find Lock, lockName=%s lockId=%d, vm_pid=%jd, lockspace=%p"), theLock->name, theLock->lkid, (intmax_t)theLock->vm_pid, lockspace);
                 rv = dlm_ls_unlock_wait(lockspace, theLock->lkid, 0, &lksb);
+                virReportError(VIR_ERR_INTERNAL_ERROR, _("release Lock, rv=%d"), rv);
                 if (!rv) {
                     virLockManagerDlmDeleteLock(theLock, driver->dlmFilePath);
                     break;
