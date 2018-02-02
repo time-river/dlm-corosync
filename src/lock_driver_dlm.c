@@ -235,7 +235,7 @@ static void virLockManagerDlmWriteLock(virLockInformationPtr lock, int fd, bool 
     return;
 }
 
-static void virLockManagerDlmNone(void)
+static void virLockManagerDlmNone(void *opaque ATTRIBUTE_UNUSED)
 {
     // do nothing
     return;
@@ -294,13 +294,12 @@ static void virLockManagerDlmAdoptLock(char *raw) {
 
     status = dlm_ls_lockx(lockspace, mode, &lksb, LKF_PERSISTENT|LKF_ORPHAN,
                           name, strlen(name), 0,
-                          , (void *)1, (void *)1,
-          //                (void *)1, (void *)1, (void *)1,
+                          (void *)1, (void *)1, (void *)1,
                           NULL, NULL);
     if (status) {
         virReportSystemError(errno,
-                             _("adopt lock failed, lockName=%s lockMode=%s"),
-                             name, NULLSTR(virLockManagerDlmToModeText(mode)));
+                             _("adopt lock failed, lockName=%s lockMode=%s, status=%d"),
+                             name, NULLSTR(virLockManagerDlmToModeText(mode)), status);
         goto out;
     }
 
@@ -909,7 +908,10 @@ static int virLockManagerDlmRelease(virLockManagerPtr lock,
                (theLock->mode == resource->mode)) {
                 /* lock is held by another process, so whether `theLock->vm_pid == priv->vm_pid` or not is nothing */
                 virReportError(VIR_ERR_INTERNAL_ERROR, _("find Lock, lockName=%s lockId=%d, vm_pid=%jd, lockspace=%p"), theLock->name, theLock->lkid, (intmax_t)theLock->vm_pid, lockspace);
-                rv = dlm_ls_unlock_wait(lockspace, theLock->lkid, 0, &lksb);
+                lksb.sb_lkid = theLock->lkid;
+                rv = dlm_ls_lock_wait(lockspace, LKM_NLMODE, &lksb, LKF_CONVERT, resource->name, strlen(resource->name), 0, NULL, NULL, NULL);
+                virReportError(VIR_ERR_INTERNAL_ERROR, _("convert lock result rv=%d status=%d lkid=%u"), rv, lksb.sb_status, lksb.sb_lkid);
+                rv = dlm_ls_unlock_wait(lockspace, lksb.sb_lkid, 0, &lksb);
                 virReportError(VIR_ERR_INTERNAL_ERROR, _("release Lock, rv=%d"), rv);
                 if (!rv) {
                     virLockManagerDlmDeleteLock(theLock, driver->dlmFilePath);
