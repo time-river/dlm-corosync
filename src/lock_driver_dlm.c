@@ -802,7 +802,7 @@ static int virLockManagerDlmAcquire(virLockManagerPtr lock,
                                      rv, lksb.sb_status);
                 rv = -1;
                 goto cleanup;
-                // FIXME: when failed ???
+                // FIXME: when failed, not need release, libvirtd would do that
             }
 
             theLock = virLockManagerDlmRecordLock(priv->resources[i].name, priv->resources[i].mode,
