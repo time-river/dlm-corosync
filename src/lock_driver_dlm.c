@@ -855,7 +855,13 @@ static int virLockManagerDlmAcquire(virLockManagerPtr lock,
                         	         "lockName=%s lockMode=%s lockId=%d vm_pid=%jd"),
                             		 NULLSTR(name), NULLSTR(virLockManagerToModeText(mode)),
                              		 lksb.sb_lkid, (intmax_t)vm_pid);
-                // TODO: release lock
+                /* record lock failed, we can't save lock information in memory, so release it */
+                rv = dlm_ls_unlock_wait(lockspace, lksb.sb_lkid, 0, &lksb);
+                if (!rv)
+                    virReportSystemError(errno,
+                                         _("failed to release lock: rv=%d lockStatue=%d"),
+                                         rv, lksb.sb_status);
+                rv = -1;
                 goto cleanup;
             }
 
@@ -960,15 +966,18 @@ static int virLockManagerDlmRelease(virLockManagerPtr lock,
                                       0, NULL, NULL, NULL);
 
                 if (rv < 0) {
-                    // TODO
+                    virReportSystemError(errno,
+                                         _("failed to convert lock: rv=%d lockStatus=%d"),
+                                         rv, lksb.sb_status);
+                    goto cleanup;
                 }
 
                 rv = dlm_ls_unlock_wait(lockspace, lksb.sb_lkid, 0, &lksb);
                 if (rv < 0) {
-                    virReportError(VIR_ERR_INTERNAL_ERROR,
-                                   _("failed to release lock: rv=%d lockStatue=%d"),
-                                   rv, lksb.sb_status);
-                    break;
+                    virReportSystemError(errno,
+                                         _("failed to release lock: rv=%d lockStatus=%d"),
+                                         rv, lksb.sb_status);
+                    goto cleanup;
                 }
 
                 virLockManagerDlmDeleteLock(theLock, driver->dlmFilePath);

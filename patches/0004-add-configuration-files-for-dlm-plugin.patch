@@ -1,0 +1,262 @@
+From 0e0779a537becc83797b36c78d7b490d2b5e26bb Mon Sep 17 00:00:00 2001
+From: time-river <me@vvl.me>
+Date: Mon, 5 Feb 2018 00:43:36 +0800
+Subject: [PATCH 4/5] add configuration files for dlm plugin
+
+Signed-off-by: time-river <me@vvl.me>
+---
+ src/Makefile.am                     | 42 ++++++++++++++++++++++++++++--
+ src/locking/dlm.conf                | 52 +++++++++++++++++++++++++++++++++++++
+ src/locking/libvirt_dlm.aug         | 35 +++++++++++++++++++++++++
+ src/locking/qemu-dlm.conf           | 52 +++++++++++++++++++++++++++++++++++++
+ src/locking/test_libvirt_dlm.aug.in |  9 +++++++
+ 5 files changed, 188 insertions(+), 2 deletions(-)
+ create mode 100644 src/locking/dlm.conf
+ create mode 100644 src/locking/libvirt_dlm.aug
+ create mode 100644 src/locking/qemu-dlm.conf
+ create mode 100644 src/locking/test_libvirt_dlm.aug.in
+
+diff --git a/src/Makefile.am b/src/Makefile.am
+index 8e73c3768..c95507532 100644
+--- a/src/Makefile.am
++++ b/src/Makefile.am
+@@ -2111,6 +2111,19 @@ else ! WITH_LXC
+ check-augeas-lxc:
+ endif ! WITH_LXC
+ 
++if WITH_DLM
++test_libvirt_dlm.aug: locking/test_libvirt_dlm.aug.in \
++		locking/qemu-dlm.conf $(AUG_GENTEST)
++	$(AM_V_GEN)$(AUG_GENTEST) locking/qemu-dlm.conf $< $@
++
++check-augeas-dlm: test_libvirt_dlm.aug
++	$(AM_V_GEN)if test -x '$(AUGPARSE)'; then \
++	    '$(AUGPARSE)' -I $(srcdir)/locking test_libvirt_dlm.aug; \
++	fi
++else ! WITH_DLM
++check-augeas-dlm:
++endif ! WITH_DLM
++
+ if WITH_SANLOCK
+ test_libvirt_sanlock.aug: locking/test_libvirt_sanlock.aug.in \
+ 		locking/qemu-sanlock.conf $(AUG_GENTEST)
+@@ -2891,9 +2904,34 @@ dlm_la_LDFLAGS = -module -avoid-version $(AM_LDFLAGS)
+ dlm_la_LIBADD = ../gnulib/lib/libgnu.la \
+ 				$(CPG_LIBS) \
+ 				$(DLM_LIBS)
++
++augeas_DATA += locking/libvirt_dlm.aug
++augeastest_DATA += test_libvirt_dlm.aug
++CLEANFILES += test_libvirt_dlm.aug
++
++locking/%-dlm.conf: $(srcdir)/locking/dlm.conf
++	$(AM_V_GEN)$(MKDIR_P) locking ; \
++	cp $< $@
++
++if WITH_QEMU
++nodist_conf_DATA += locking/qemu-dlm.conf
++BUILT_SOURCES += locking/qemu-dlm.conf
++DISTCLEANFILES += locking/qemu-dlm.conf
++endif WITH_QEMU
++
++if WITH_LIBXL
++nodist_conf_DATA += locking/libxl-dlm.conf
++BUILT_SOURCES += locking/libxl-dlm.conf
++DISTCLEANFILES += locking/libxl-dlm.conf
++endif WITH_LIBXL
++
+ else ! WITH_DLM
+ EXTRA_DIST += $(LOCK_DRIVER_DLM_SOURCES)
+-endif
++endif ! WITH_DLM
++
++EXTRA_DIST += locking/dlm.conf \
++	locking/libvirt_dlm.aug \
++	locking/test_libvirt_dlm.aug.in
+ 
+ if WITH_SANLOCK
+ lockdriver_LTLIBRARIES += sanlock.la
+@@ -3270,7 +3308,7 @@ endif WITH_LIBVIRTD
+ 	$(MKDIR_P) "$(DESTDIR)$(localstatedir)/lib/libvirt/filesystems"
+ 	$(MKDIR_P) "$(DESTDIR)$(localstatedir)/lib/libvirt/boot"
+ if WITH_DLM
+-	$(MKDIR_P) "$(DESTDIR)$(localstatedir)/lib/libvirt/dlm"
++       $(MKDIR_P) "$(DESTDIR)$(localstatedir)/lib/libvirt/dlm"
+ endif WITH_DLM
+ if WITH_SANLOCK
+ 	$(MKDIR_P) "$(DESTDIR)$(localstatedir)/lib/libvirt/sanlock"
+diff --git a/src/locking/dlm.conf b/src/locking/dlm.conf
+new file mode 100644
+index 000000000..4eb200257
+--- /dev/null
++++ b/src/locking/dlm.conf
+@@ -0,0 +1,52 @@
++#
++# The default lockd behaviour is to acquire locks directly
++# against each configured disk file / block device. If the
++# application wishes to instead manually manage leases in
++# the guest XML, then this parameter can be disabled
++#
++#auto_disk_leases = 1
++
++#
++# Flag to determine whether we allow starting of guests
++# which do not have any <lease> elements defined in their
++# configuration.
++#
++# If 'auto_disk_leases' is disabled, this setting defaults
++# to enabled, otherwise it defaults to disabled.
++#
++#require_lease_for_disks = 0
++
++#
++# The DLM allows locks to be partitioned into "lockspaces",
++# The purpose of lockspaces is to provide a private namespace
++# for locks that are part of a single application. Lockspaces
++# are identified by name and are cluster-wide. A lockspace
++# named “myLS” is the same lockspace on all nodes in the
++# cluster and locks will contend for resources the same as
++# if they were on the same system. Lockspace names are
++# case-sensitive so “MyLS” is a distinct lockspace to “myLS”.
++#
++# More information refers to '3.8. Lockspaces' in
++#   http://people.redhat.com/ccaulfie/docs/rhdlmbook.pdf
++#
++#lockspace_name = "libvirt"
++
++#
++# One lock must belong to one lockspace, and is associated
++# with one lock resource, owned by one process. The lock
++# without `LKF_PERSISTENT` would disappear if owner process
++# was dead. However, a lock with `LKF_PERSISTENT` flag means
++# lock is alive although owner process was dead. However, it
++# will become a orphan lock and could't be released. In order
++# to adopt those orphan locks we need a file to record the
++# lock information.
++#
++#lock_record_file_path = "/tmp/libvirtd-dlm-file"
++#
++
++# 
++# Flag to determine to whether purge orphan locks which could
++# not be adopted or not during the dlm lock plugin
++# initialization.
++#
++#purge_lockspace = 1
+diff --git a/src/locking/libvirt_dlm.aug b/src/locking/libvirt_dlm.aug
+new file mode 100644
+index 000000000..257e4c421
+--- /dev/null
++++ b/src/locking/libvirt_dlm.aug
+@@ -0,0 +1,35 @@
++(* /etc/libvirt/qemu-lockd.conf *)
++
++module Libvirt_lockd =
++   autoload xfm
++
++   let eol   = del /[ \t]*\n/ "\n"
++   let value_sep   = del /[ \t]*=[ \t]*/  " = "
++   let indent = del /[ \t]*/ ""
++
++   let str_val = del /\"/ "\"" . store /[^\"]*/ . del /\"/ "\""
++   let bool_val = store /0|1/
++   let int_val = store /[0-9]+/
++
++   let str_entry       (kw:string) = [ key kw . value_sep . str_val ]
++   let bool_entry      (kw:string) = [ key kw . value_sep . bool_val ]
++   let int_entry       (kw:string) = [ key kw . value_sep . int_val ]
++
++
++   (* Each enty in the config is one of the following three ... *)
++   let entry = bool_entry "auto_disk_leases"
++             | bool_entry "require_lease_for_disks"
++             | str_entry "lockspace_name"
++             | str_entry "lock_record_file_path"
++             | str_entry "purge_lockspace"
++   let comment = [ label "#comment" . del /#[ \t]*/ "# " .  store /([^ \t\n][^\n]*)?/ . del /\n/ "\n" ]
++   let empty = [ label "#empty" . eol ]
++
++   let record = indent . entry . eol
++
++   let lns = ( record | comment | empty ) *
++
++   let filter = incl "/etc/libvirt/qemu-lockd.conf"
++              . Util.stdexcl
++
++   let xfm = transform lns filter
+diff --git a/src/locking/qemu-dlm.conf b/src/locking/qemu-dlm.conf
+new file mode 100644
+index 000000000..4eb200257
+--- /dev/null
++++ b/src/locking/qemu-dlm.conf
+@@ -0,0 +1,52 @@
++#
++# The default lockd behaviour is to acquire locks directly
++# against each configured disk file / block device. If the
++# application wishes to instead manually manage leases in
++# the guest XML, then this parameter can be disabled
++#
++#auto_disk_leases = 1
++
++#
++# Flag to determine whether we allow starting of guests
++# which do not have any <lease> elements defined in their
++# configuration.
++#
++# If 'auto_disk_leases' is disabled, this setting defaults
++# to enabled, otherwise it defaults to disabled.
++#
++#require_lease_for_disks = 0
++
++#
++# The DLM allows locks to be partitioned into "lockspaces",
++# The purpose of lockspaces is to provide a private namespace
++# for locks that are part of a single application. Lockspaces
++# are identified by name and are cluster-wide. A lockspace
++# named “myLS” is the same lockspace on all nodes in the
++# cluster and locks will contend for resources the same as
++# if they were on the same system. Lockspace names are
++# case-sensitive so “MyLS” is a distinct lockspace to “myLS”.
++#
++# More information refers to '3.8. Lockspaces' in
++#   http://people.redhat.com/ccaulfie/docs/rhdlmbook.pdf
++#
++#lockspace_name = "libvirt"
++
++#
++# One lock must belong to one lockspace, and is associated
++# with one lock resource, owned by one process. The lock
++# without `LKF_PERSISTENT` would disappear if owner process
++# was dead. However, a lock with `LKF_PERSISTENT` flag means
++# lock is alive although owner process was dead. However, it
++# will become a orphan lock and could't be released. In order
++# to adopt those orphan locks we need a file to record the
++# lock information.
++#
++#lock_record_file_path = "/tmp/libvirtd-dlm-file"
++#
++
++# 
++# Flag to determine to whether purge orphan locks which could
++# not be adopted or not during the dlm lock plugin
++# initialization.
++#
++#purge_lockspace = 1
+diff --git a/src/locking/test_libvirt_dlm.aug.in b/src/locking/test_libvirt_dlm.aug.in
+new file mode 100644
+index 000000000..ceb8a0324
+--- /dev/null
++++ b/src/locking/test_libvirt_dlm.aug.in
+@@ -0,0 +1,9 @@
++module Test_libvirt_dlm =
++  ::CONFIG::
++
++   test Libvirt_dlm.lns get conf =
++{ "auto_disk_leases" = "1" }
++{ "require_lease_for_disks" = "0" }
++{ "lockspace_name" = "libvirt" }
++{ "lock_record_file_path" = "/tmp/libvirtd-dlm-file" }
++{ "purge_lockspace" = "1" }
+-- 
+2.11.0
+

@@ -1,0 +1,37 @@
+From 802e6a7fbe1ed988041d12f81576e92ba5124f9e Mon Sep 17 00:00:00 2001
+From: time-river <me@vvl.me>
+Date: Sun, 4 Feb 2018 23:26:15 +0800
+Subject: [PATCH 2/5] Fix release of locks with dlm plugin
+
+The dlm lock plugin couldn't release locks when the instance
+was destroyed, kill manually because that we can't use file
+descriptor which couldn't adopt after libvirtd reboot to be
+aware of the process dead, we need to proactively to release
+the lock just like unlink the <domain>.xml and <domain>.pid
+files. This operation could be found in libxl
+.
+
+Signed-off-by: time-river <me@vvl.me>
+---
+ src/qemu/qemu_process.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/src/qemu/qemu_process.c b/src/qemu/qemu_process.c
+index 5a364730c..49c64be6f 100644
+--- a/src/qemu/qemu_process.c
++++ b/src/qemu/qemu_process.c
+@@ -6626,6 +6626,11 @@ void qemuProcessStop(virQEMUDriverPtr driver,
+ 
+     qemuProcessRemoveDomainStatus(driver, vm);
+ 
++    VIR_FREE(priv->lockState);
++    if (virDomainLockProcessPause(driver->lockManager, vm, &priv->lockState) < 0)
++        VIR_WARN("Unable to release lease on %s", vm->def->name);
++    VIR_DEBUG("Preserving lock state '%s'", NULLSTR(priv->lockState));
++
+     /* Remove VNC and Spice ports from port reservation bitmap, but only if
+        they were reserved by the driver (autoport=yes)
+     */
+-- 
+2.11.0
+
