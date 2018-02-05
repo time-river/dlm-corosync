@@ -1,6 +1,6 @@
-From d801fef316684698a292a68f692281d53ddfcbc3 Mon Sep 17 00:00:00 2001
-From: time-river <feather12315@live.com>
-Date: Mon, 5 Feb 2018 14:59:54 +0800
+From 0368a086107df7939abdbbd9ecf57f86516f9708 Mon Sep 17 00:00:00 2001
+From: river <lfu@suse.com>
+Date: Mon, 5 Feb 2018 16:40:15 +0800
 Subject: [PATCH 2/3] Fix release of locks with dlm plugin
 
 The dlm lock plugin couldn't release locks when the vm instance
@@ -10,7 +10,7 @@ aware of the process dead, we need to proactively to release
 the lock just like unlink the <domain>.xml and <domain>.pid
 files. This operation could be found in libxl.
 
-Signed-off-by: time-river <feather12315@live.com>
+Signed-off-by: river <lfu@suse.com>
 ---
  src/qemu/qemu_process.c | 5 +++++
  1 file changed, 5 insertions(+)

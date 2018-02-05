@@ -1,9 +1,9 @@
-From 459d44d5ae599aee25528ba217b128def0682600 Mon Sep 17 00:00:00 2001
-From: time-river <feather12315@live.com>
-Date: Mon, 5 Feb 2018 15:49:01 +0800
+From cf24ddc0d38e84da3d8947561edb8f20c54b5301 Mon Sep 17 00:00:00 2001
+From: river <lfu@suse.com>
+Date: Mon, 5 Feb 2018 16:41:06 +0800
 Subject: [PATCH 3/3] Add configuration files for dlm plugin
 
-Signed-off-by: time-river <feather12315@live.com>
+Signed-off-by: river <lfu@suse.com>
 ---
  .gitignore                          |  2 ++
  src/Makefile.am                     | 40 +++++++++++++++++++++++++++-
@@ -117,7 +117,7 @@ index 264af7cf9..85be09b99 100644
  
 diff --git a/src/locking/dlm.conf b/src/locking/dlm.conf
 new file mode 100644
-index 000000000..bb77f11b0
+index 000000000..7cc60f5c2
 --- /dev/null
 +++ b/src/locking/dlm.conf
 @@ -0,0 +1,52 @@
@@ -167,7 +167,7 @@ index 000000000..bb77f11b0
 +#lock_record_file_path = "/tmp/libvirtd-dlm-file"
 +#
 +
-+# 
++#
 +# Flag to determine to whether purge orphan locks which could
 +# not be adopted or not during the dlm lock plugin
 +# initialization.
