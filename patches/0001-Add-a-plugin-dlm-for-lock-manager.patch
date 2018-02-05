@@ -1,15 +1,20 @@
-From eba3849a5d44d56330234c5550667b089b4e0c2d Mon Sep 17 00:00:00 2001
-From: time-river <me@vvl.me>
-Date: Sun, 4 Feb 2018 23:01:36 +0800
-Subject: [PATCH 1/5] add dlm lock plugin
+From c1caff9b15062052dea898995167d0e840b33b9a Mon Sep 17 00:00:00 2001
+From: time-river <feather12315@live.com>
+Date: Mon, 5 Feb 2018 14:54:52 +0800
+Subject: [PATCH 1/3] Add a plugin dlm for lock manager
 
-Signed-off-by: time-river <me@vvl.me>
+dlm is implemented by linux kernel, provides userspace API by
+'libdlm' to lock/unlock resource, cooperated with cluster
+communication software, such as corosync, could satisfy the
+demands of libvirt lock manager.
+
+Signed-off-by: time-river <feather12315@live.com>
 ---
  configure.ac                  |    6 +
  m4/virt-cpg.m4                |   37 ++
  m4/virt-dlm.m4                |   36 ++
- src/Makefile.am               |   18 +
- src/locking/lock_driver_dlm.c | 1044 +++++++++++++++++++++++++++++++++++++++++
+ src/Makefile.am               |   15 +
+ src/locking/lock_driver_dlm.c | 1047 +++++++++++++++++++++++++++++++++++++++++
  src/util/virlist.h            |  110 +++++
  6 files changed, 1251 insertions(+)
  create mode 100644 m4/virt-cpg.m4
@@ -134,7 +139,7 @@ index 000000000..dc5f5f152
 +  LIBVIRT_RESULT_LIB([DLM])
 +])
 diff --git a/src/Makefile.am b/src/Makefile.am
-index 79adc9ba5..8e73c3768 100644
+index 79adc9ba5..8742921fa 100644
 --- a/src/Makefile.am
 +++ b/src/Makefile.am
 @@ -305,6 +305,10 @@ DRIVER_SOURCES = \
@@ -166,22 +171,12 @@ index 79adc9ba5..8e73c3768 100644
  
  if WITH_SANLOCK
  lockdriver_LTLIBRARIES += sanlock.la
-@@ -3254,6 +3269,9 @@ endif WITH_LIBVIRTD
- 	$(MKDIR_P) "$(DESTDIR)$(localstatedir)/lib/libvirt/images"
- 	$(MKDIR_P) "$(DESTDIR)$(localstatedir)/lib/libvirt/filesystems"
- 	$(MKDIR_P) "$(DESTDIR)$(localstatedir)/lib/libvirt/boot"
-+if WITH_DLM
-+	$(MKDIR_P) "$(DESTDIR)$(localstatedir)/lib/libvirt/dlm"
-+endif WITH_DLM
- if WITH_SANLOCK
- 	$(MKDIR_P) "$(DESTDIR)$(localstatedir)/lib/libvirt/sanlock"
- endif WITH_SANLOCK
 diff --git a/src/locking/lock_driver_dlm.c b/src/locking/lock_driver_dlm.c
 new file mode 100644
-index 000000000..8bfad858c
+index 000000000..92d80003a
 --- /dev/null
 +++ b/src/locking/lock_driver_dlm.c
-@@ -0,0 +1,1044 @@
+@@ -0,0 +1,1047 @@
 +/*
 + * lock_driver_dlm.c: a lock driver for dlm
 + *
@@ -233,7 +228,7 @@ index 000000000..8bfad858c
 +#define DLM_LOCKSPACE_NAME  "libvirt"
 +
 +#define LOCK_RECORD_FILE_MODE       0644
-+#define LOCK_RECORD_FILE_PATH       "/tmp/dlmfile"
++#define LOCK_RECORD_FILE_PATH       "/tmp/libvirtd-dlm-file"
 +
 +#define PRMODE  "PRMODE"
 +#define EXMODE  "EXMODE"
@@ -331,6 +326,7 @@ index 000000000..8bfad858c
 +    if (virConfGetValueBool(conf, "auto_disk_leases", &driver->autoDiskLease) < 0)
 +        goto cleanup;
 +
++    driver->requireLeaseForDisks = !driver->autoDiskLease;
 +    if (virConfGetValueBool(conf, "require_lease_for_disks", &driver->requireLeaseForDisks) < 0)
 +        goto cleanup;
 +
@@ -1037,6 +1033,8 @@ index 000000000..8bfad858c
 +                                         _("failed to acquire lock: rv=%d lockStatus=%d"),
 +                                         rv, lksb.sb_status);
 +                }
++                /* rv would be 0 although acquiring lock failed */
++                rv = -1;
 +                goto cleanup;
 +            }
 +
@@ -1343,5 +1341,5 @@ index 000000000..4ac3626c7
 +
 +#endif
 -- 
-2.11.0
+2.15.1
 

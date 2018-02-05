@@ -1,38 +1,37 @@
-From 4b918f956cf65838ea9b6b000bff4e8a883cd607 Mon Sep 17 00:00:00 2001
-From: time-river <me@vvl.me>
-Date: Mon, 5 Feb 2018 00:45:37 +0800
-Subject: [PATCH 0/5] *** SUBJECT HERE ***
+From 459d44d5ae599aee25528ba217b128def0682600 Mon Sep 17 00:00:00 2001
+From: time-river <feather12315@live.com>
+Date: Mon, 5 Feb 2018 15:55:36 +0800
+Subject: [PATCH 0/3] *** SUBJECT HERE ***
 
 *** BLURB HERE ***
 
-time-river (5):
-  add dlm lock plugin
+time-river (3):
+  Add a plugin dlm for lock manager
   Fix release of locks with dlm plugin
-  modify som unsutable code
-  add configuration files for dlm plugin
-  delete useless content
+  Add configuration files for dlm plugin
 
+ .gitignore                          |    2 +
  configure.ac                        |    6 +
  m4/virt-cpg.m4                      |   37 ++
  m4/virt-dlm.m4                      |   36 ++
  src/Makefile.am                     |   53 ++
+ src/libxl/libxl.conf                |    8 +-
  src/locking/dlm.conf                |   52 ++
  src/locking/libvirt_dlm.aug         |   35 ++
- src/locking/lock_driver_dlm.c       | 1045 +++++++++++++++++++++++++++++++++++
- src/locking/qemu-dlm.conf           |   52 ++
+ src/locking/lock_driver_dlm.c       | 1047 +++++++++++++++++++++++++++++++++++
  src/locking/test_libvirt_dlm.aug.in |    9 +
+ src/qemu/qemu.conf                  |    8 +-
  src/qemu/qemu_process.c             |    5 +
  src/util/virlist.h                  |  110 ++++
- 11 files changed, 1440 insertions(+)
+ 13 files changed, 1401 insertions(+), 7 deletions(-)
  create mode 100644 m4/virt-cpg.m4
  create mode 100644 m4/virt-dlm.m4
  create mode 100644 src/locking/dlm.conf
  create mode 100644 src/locking/libvirt_dlm.aug
  create mode 100644 src/locking/lock_driver_dlm.c
- create mode 100644 src/locking/qemu-dlm.conf
  create mode 100644 src/locking/test_libvirt_dlm.aug.in
  create mode 100644 src/util/virlist.h
 
 -- 
-2.11.0
+2.15.1
 
