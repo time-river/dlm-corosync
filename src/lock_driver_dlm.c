@@ -49,7 +49,7 @@
 #define DLM_LOCKSPACE_NAME  "libvirt"
 
 #define LOCK_RECORD_FILE_MODE       0644
-#define LOCK_RECORD_FILE_PATH       "/tmp/dlmfile"
+#define LOCK_RECORD_FILE_PATH       "/tmp/libvirtd-dlm-file"
 
 #define PRMODE  "PRMODE"
 #define EXMODE  "EXMODE"
@@ -117,7 +117,8 @@ struct _virLockManagerDlmDriver {
 };
 
 struct _virListWait {
-    virMutex mutex;
+    virMutex listMutex;
+    virMutex fileMutex;
     virListHead list;
 };
 
@@ -146,6 +147,7 @@ static int virLockManagerDlmLoadConfig(const char *configFile)
     if (virConfGetValueBool(conf, "auto_disk_leases", &driver->autoDiskLease) < 0)
         goto cleanup;
 
+    driver->requireLeaseForDisks = !driver->autoDiskLease;
     if (virConfGetValueBool(conf, "require_lease_for_disks", &driver->requireLeaseForDisks) < 0)
         goto cleanup;
 
@@ -204,12 +206,12 @@ static virLockInformationPtr virLockManagerDlmRecordLock(const char *name,
     lock->lkid = lkid;
     lock->vm_pid = vm_pid;
 
-    virMutexLock(&(lockList.mutex));
-    virListAddTail(&lock->entry, &(lockList.list));
-    virMutexUnlock(&(lockList.mutex));
+    virMutexLock(&(lockListWait.listMutex));
+    virListAddTail(&lock->entry, &(lockListWait.list));
+    virMutexUnlock(&(lockListWait.listMutex));
 
     VIR_DEBUG("record lock sucessfully, lockName=%s lockMode=%s lockId=%d",
-              NULLSTR(name), lkid, NULLSTR(virLockManagerDlmToModeText(mode)));
+              NULLSTR(name), NULLSTR(virLockManagerDlmToModeText(mode)), lkid);
 
     return lock;
 
@@ -249,11 +251,11 @@ static void virLockManagerDlmWriteLock(virLockInformationPtr lock, int fd, bool 
              status, lock->name,
              NULLSTR(virLockManagerDlmToModeText(lock->mode)),
              (intmax_t)lock->vm_pid);
-    virReportError(VIR_ERR_INTERNAL_ERROR, _("write %s length=%zu to fd=%d"), buffer, strlen(buffer), fd);
+
     if (safewrite(fd, buffer, strlen(buffer)) != strlen(buffer)) {
         virReportSystemError(errno,
                              _("unable to write lock information '%s' to file '%s'"),
-                             NULLSTR(buffer), NULLSTR(driver->lockRecordFilePath));
+                             buffer, NULLSTR(driver->lockRecordFilePath));
         return;
     }
 
@@ -339,7 +341,7 @@ static void virLockManagerDlmAdoptLock(char *raw) {
         virReportSystemError(errno,
                              _("unable to record lock information, "
                                  "lockName=%s lockMode=%s lockId=%d vm_pid=%jd"),
-                             NULLSTR(name), NULLSTR(virLockManagerToModeText(mode)),
+                             NULLSTR(name), NULLSTR(virLockManagerDlmToModeText(mode)),
                              lksb.sb_lkid, (intmax_t)vm_pid);
     }
 
@@ -351,7 +353,7 @@ static void virLockManagerDlmAdoptLock(char *raw) {
     return;
 }
 
-static int virLockManagerDlmPrepareLockfile(const char *lockRecordFilePath)
+static int virLockManagerDlmPrepareLockList(const char *lockRecordFilePath)
 {
     FILE *fp = NULL;
     int line = 0;
@@ -393,13 +395,13 @@ static int virLockManagerDlmGetLocalNodeId(uint32_t *nodeId)
     int rv = -1;
 
     if (cpg_model_initialize(&handle, CPG_MODEL_V1, NULL, NULL) != CS_OK) {
-        virReportError(VIR_ERR_CPG_ERROR, "%s"
+        virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
                        _("unable to create a new connection to the CPG service"));
 		return -1;
     }
     
 	if( cpg_local_get(handle, nodeId) != CS_OK) {
-        virReportError(VIR_ERR_CPG_ERROR, "%s"
+        virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
                        _("unable to get the local node id by the CPG service"));
         goto cleanup;
     }
@@ -408,23 +410,25 @@ static int virLockManagerDlmGetLocalNodeId(uint32_t *nodeId)
 
     rv = 0;
 
- cleanup;
+ cleanup:
     if (cpg_finalize(handle) != CS_OK)
         VIR_WARN("unable to finalize the CPG service");
 
 	return rv;
 }
 
-static int virLockManagerDlmDumpLockfile(const char *lockRecordFilePath)
+static int virLockManagerDlmDumpLockList(const char *lockRecordFilePath)
 {
     virLockInformationPtr theLock = NULL;
     char buffer[BUFFERLEN] = {0};
     int fd = -1, rv = -1;
 
-    fd = open(lockRecordFilePath, O_WRONLY|O_CREAT|O_TRUNC, DLM_FILE_MODE);
+    /* not need mutex because of only one instance would be initialized */
+    fd = open(lockRecordFilePath, O_WRONLY|O_CREAT|O_TRUNC, LOCK_RECORD_FILE_MODE);
     if (fd < 0) {
-        virReportSystemError(errno, "%s",
-                             _("unable to open '%s'"), lockRecordFilePath);
+        virReportSystemError(errno,
+                             _("unable to open '%s'"),
+                             lockRecordFilePath);
         return -1;
     }
 
@@ -437,7 +441,7 @@ static int virLockManagerDlmDumpLockfile(const char *lockRecordFilePath)
         goto cleanup;
     }
 
-    list_for_each_entry(theLock, &lockList, entry) {
+    virListForEachEntry(theLock, &(lockListWait.list), entry) {
         virLockManagerDlmWriteLock(theLock, fd, 1);
     }
 
@@ -483,7 +487,6 @@ static int virLockManagerDlmSetupLockRecordFile(const char *lockRecordFilePath,
         else
             VIR_DEBUG("node=%u purge DLM locks success in lockspace=%s",
                       nodeId, NULLSTR(driver->lockspaceName));
-        }
     }
 
     /* initialize the lock record file */
@@ -502,10 +505,17 @@ static int virLockManagerDlmSetup(void)
     bool newLockspace = false;
 
     virListHeadInit(&(lockListWait.list));
+    if ((virMutexInit(&(lockListWait.listMutex)) < 0) ||
+        (virMutexInit(&(lockListWait.fileMutex)) < 0)) {
+        virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
+                       _("unable to initialize mutex"));
+        return -1;
+    }
+ 
 
     /* check whether dlm is running or not */
     if (access(DLM_CLUSTER_NAME_PATH, F_OK)) {
-        virReportError(VIR_ERR_DLM_INVALID, "%s",
+        virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
                        _("check dlm_controld, ensure it has setuped"));
         return -1;
     }
@@ -601,8 +611,8 @@ static int virLockManagerDlmDeinit(void)
     /* not care about whether adopting lock or not,
      * just release those to prevent memory leak
      */
-    virListForEachEntry(theLock, &(lockList.list), entry) {
-        virListDelete(theLock->entry);
+    virListForEachEntry(theLock, &(lockListWait.list), entry) {
+        virListDelete(&(theLock->entry));
         VIR_FREE(theLock->name);
         VIR_FREE(theLock);
     }
@@ -673,12 +683,12 @@ static int virLockManagerDlmNew(virLockManagerPtr lock,
         return -1;
     }
 
-    if (priv->id == 0) {
+    if (priv->vm_id == 0) {
         virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
                        _("missing ID parameter for domain object"));
         return -1;
     }
-    if (!virUUIDIsValid(priv->uuid)) {
+    if (!virUUIDIsValid(priv->vm_uuid)) {
         virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
                        _("missing UUID parameter for domain object"));
         return -1;
@@ -819,7 +829,7 @@ static int virLockManagerDlmAcquire(virLockManagerPtr lock,
     if (!(flags & VIR_LOCK_MANAGER_ACQUIRE_REGISTER_ONLY)) {
         VIR_DEBUG("Acquiring object %zu", priv->nresources);
 
-        theFd = open(driver->lockInformationFilePath, O_RDWR);
+        theFd = open(driver->lockRecordFilePath, O_RDWR);
         if (theFd < 0) {
             virReportSystemError(errno,
                                  _("unable to open '%s'"), driver->lockRecordFilePath);
@@ -837,13 +847,15 @@ static int virLockManagerDlmAcquire(virLockManagerPtr lock,
             /* both `rv` and `lksb.sb_status` equal 0 means lock sucessfully */
             if (rv || lksb.sb_status) {
                 if (lksb.sb_status == EAGAIN)
-                    virReportError(VIR_ERR_DLM_ERROR, "%s",
+                    virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
                                    _("failed to acquire lock: the lock could not be granted"));
                 else {
                     virReportSystemError(errno, 
                                          _("failed to acquire lock: rv=%d lockStatus=%d"),
                                          rv, lksb.sb_status);
                 }
+                /* rv would be 0 although acquiring lock failed */
+                rv = -1;
                 goto cleanup;
             }
 
@@ -853,8 +865,9 @@ static int virLockManagerDlmAcquire(virLockManagerPtr lock,
         		virReportSystemError(errno,
                 		             _("unable to record lock information, "
                         	         "lockName=%s lockMode=%s lockId=%d vm_pid=%jd"),
-                            		 NULLSTR(name), NULLSTR(virLockManagerToModeText(mode)),
-                             		 lksb.sb_lkid, (intmax_t)vm_pid);
+                            		 NULLSTR(priv->resources[i].name),
+                                     NULLSTR(virLockManagerDlmToModeText(priv->resources[i].mode)),
+                             		 lksb.sb_lkid, (intmax_t)priv->vm_pid);
                 /* record lock failed, we can't save lock information in memory, so release it */
                 rv = dlm_ls_unlock_wait(lockspace, lksb.sb_lkid, 0, &lksb);
                 if (!rv)
@@ -865,7 +878,9 @@ static int virLockManagerDlmAcquire(virLockManagerPtr lock,
                 goto cleanup;
             }
 
+            virMutexLock(&(lockListWait.fileMutex));
             virLockManagerDlmWriteLock(theLock, theFd, 1);
+            virMutexUnlock(&(lockListWait.fileMutex));
         }
 
         if(VIR_CLOSE(theFd) < 0) {
@@ -900,9 +915,9 @@ static void virLockManagerDlmDeleteLock(const virLockInformationPtr lock,
     if (!lock)
         return;
 
-    virMutexLock(&(lockList.mutex));
-    list_del(&(lock->entry));
-    virMutexUnlock(&(lockList.mutex));
+    virMutexLock(&(lockListWait.listMutex));
+    virListDelete(&(lock->entry));
+    virMutexUnlock(&(lockListWait.listMutex));
 
     fd = open(lockRecordFilePath, O_RDWR);
     if (fd < 0) {
@@ -910,12 +925,15 @@ static void virLockManagerDlmDeleteLock(const virLockInformationPtr lock,
                              _("unable to open '%s'"), lockRecordFilePath);
         goto cleanup;
     }
+
+    virMutexLock(&(lockListWait.fileMutex));
     virLockManagerDlmWriteLock(lock, fd, 0); 
+    virMutexUnlock(&(lockListWait.fileMutex));
 
     if (VIR_CLOSE(fd) < 0) {
         virReportSystemError(errno,
-                             _("unable to save file %s"),
-                             dlmFilePath);
+                             _("unable to save file '%s'"),
+                             lockRecordFilePath);
         VIR_FORCE_CLOSE(fd);
     }
 
@@ -949,7 +967,7 @@ static int virLockManagerDlmRelease(virLockManagerPtr lock,
     for (i = 0; i < priv->nresources; i++) {
         resource = priv->resources + i;
 
-        list_for_each_entry (theLock, &lockList, entry) {
+        virListForEachEntry (theLock, &(lockListWait.list), entry) {
             if((theLock->vm_pid == priv->vm_pid)    &&
                STREQ(theLock->name, resource->name) &&
                (theLock->mode == resource->mode)) {
@@ -972,6 +990,11 @@ static int virLockManagerDlmRelease(virLockManagerPtr lock,
                     goto cleanup;
                 }
 
+                /* don't care whether the lock is released or not,
+                 * it will be automatically released after the libvirtd dead
+                 */
+                virLockManagerDlmDeleteLock(theLock, driver->lockRecordFilePath);
+
                 rv = dlm_ls_unlock_wait(lockspace, lksb.sb_lkid, 0, &lksb);
                 if (rv < 0) {
                     virReportSystemError(errno,
@@ -979,8 +1002,6 @@ static int virLockManagerDlmRelease(virLockManagerPtr lock,
                                          rv, lksb.sb_status);
                     goto cleanup;
                 }
-
-                virLockManagerDlmDeleteLock(theLock, driver->dlmFilePath);
 
                 break;
             }
