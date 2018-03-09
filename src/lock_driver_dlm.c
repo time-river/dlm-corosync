@@ -822,14 +822,14 @@ virLockManagerDLMAcquire(virLockManagerPtr lock,
             }
 
             if (res->nLocks == res->nHolders) {
-                rv = dlm_ls_lock_wait(driver->resources, LKM_NLMODE,
+                rv = dlm_ls_lock_wait(driver->lockspace, LKM_NLMODE,
                                       &lksb, LKF_EXPEDITE,
                                       args->name, strlen(args->name),
                                       0, NULL, NULL, NULL);
-                if (rv < 0) {
+                if ((rv < 0) || (lksb.sb_status != 0)) {
                     virReportError(VIR_ERR_INTERNAL_ERROR,
-                                   _("unable to add NL lock, rv=%d"),
-                                   rv);
+                                   _("unable to add NL lock, rv=%d, lockStatus=%d"),
+                                   rv, lksb.sb_status);
                     return -1;
                 }
                 if (VIR_EXPAND_N(res->locks, res->nLocks, 1) < 0)
@@ -847,13 +847,19 @@ virLockManagerDLMAcquire(virLockManagerPtr lock,
                 lksb.sb_lkid = res->locks[index].lkid;
             }
 
-            rv = dlm_ls_lock_wait(driver->resources, args->mode,
+            rv = dlm_ls_lock_wait(driver->lockspace, args->mode,
                                   &lksb, LKF_CONVERT|LKF_NOQUEUE|LKF_PERSISTENT,
                                   args->name, strlen(args->name),
                                   0, NULL, NULL, NULL);
-            if (rv < 0) {
-                virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
-                               _("failed to acquire lock: the lock could not be granted"));
+            if ((rv < 0) || (lksb.sb_status != 0)) {
+                if (lksb.sb_status == EAGAIN)
+                    virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
+                                   _("failed to acquire lock: the lock could not be granted"));
+                else
+                    virReportError(errno,
+                                   _("failed to acquire lock: rv=%d lockStatus=%s"),
+                                   rv, lksb.sb_status);
+                return -1;
             }
 
             res->nHolders += 1;
