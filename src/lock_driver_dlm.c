@@ -259,7 +259,7 @@ virLockManagerDLMResourceDataFree(void *opaque,
     while(res->nLocks != 0) {
         lock = res->locks + res->nLocks - 1;
         rv = dlm_ls_unlock_wait(driver->lockspace, lock->lkid, 0, &lksb);
-        if (rv < 0) {
+        if ((rv < 0) || (lksb.sb_status != EUNLOCK)) {
             VIR_WARN("unable to release lock: rv=%d lockStatus=%d",
                      rv, lksb.sb_status);
         }
@@ -472,7 +472,6 @@ virLockManagerDLMSetupLockRecordFile(const bool newLockspace,
                       nodeId, driver->lockspaceName);
     }
 
-    /*
     struct sigaction sigAction = {
         .sa_handler = virLockManagerDLMSaveLock,
     };
@@ -497,7 +496,7 @@ virLockManagerDLMSetupLockRecordFile(const bool newLockspace,
                              _("unable to register SIGTERM handler"));
         return -1;
     }
-*/
+
     return 0;
 }
 
@@ -862,6 +861,7 @@ virLockManagerDLMAcquire(virLockManagerPtr lock,
                 return -1;
             }
 
+            res->locks[index].vm_pid = priv->vm_pid;
             res->nHolders += 1;
             res->mode = args->mode;
         }
@@ -918,8 +918,12 @@ virLockManagerDLMRelease(virLockManagerPtr lock,
             continue;
 
         memset(&lksb, 0, sizeof(lksb));
-        rv = dlm_ls_unlock_wait(driver->lockspace, res->locks[i].lkid, 0, &lksb);
-        if (rv < 0) {
+        lksb.sb_lkid = res->locks[i].lkid;
+        rv = dlm_ls_lock_wait(driver->lockspace, LKM_NLMODE,
+                              &lksb, LKF_CONVERT,
+                              res->name, strlen(res->name), 
+                              0, NULL, NULL, NULL);
+        if ((rv < 0) || (lksb.sb_status != 0)) {
             virReportError(VIR_ERR_INTERNAL_ERROR,
                            _("failed to release lock: rv=%d lockStatus=%d"),
                            rv, lksb.sb_status);
