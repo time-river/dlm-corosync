@@ -142,7 +142,7 @@ static int virLockManagerDlmLoadConfig(const char *configFile)
     }
 
 	if (!(conf = virConfReadFile(configFile, 0)))
-		return -1;	
+		return -1;
 
     if (virConfGetValueBool(conf, "auto_disk_leases", &driver->autoDiskLease) < 0)
         goto cleanup;
@@ -233,7 +233,7 @@ static void virLockManagerDlmWriteLock(virLockInformationPtr lock, int fd, bool 
         return;
     }
 
-    /* 
+    /*
      * STATUS RESOURCE_NAME LOCK_MODE VM_PID\n
      *      6            64         9     10
      * 93 = 6 + 1 + 64 + 1 + 9 + 1 + 10 + 1
@@ -246,7 +246,7 @@ static void virLockManagerDlmWriteLock(virLockInformationPtr lock, int fd, bool 
                              fd);
         return;
     }
-    
+
     snprintf(buffer, sizeof(buffer), "%6d %64s %9s %10jd\n", \
              status, lock->name,
              NULLSTR(virLockManagerDlmToModeText(lock->mode)),
@@ -301,7 +301,7 @@ static void virLockManagerDlmAdoptLock(char *raw) {
             break;
         case 3:
             if ((virStrToLong_i(subtoken, &endptr, 10, &vm_pid) < 0) || !vm_pid) {
-                virReportError(VIR_ERR_INTERNAL_ERROR, 
+                virReportError(VIR_ERR_INTERNAL_ERROR,
                                _("cannot extract lock vm_pid '%s'"), subtoken);
                 goto cleanup;
             }
@@ -363,6 +363,8 @@ static int virLockManagerDlmPrepareLockList(const char *lockRecordFilePath)
 
     fp = fopen(lockRecordFilePath, "r");
     if (!fp) {
+        if (errno == ENOENT)
+            return 0;
         virReportSystemError(errno,
                              _("unable to open '%s'"), lockRecordFilePath);
         return -1;
@@ -399,7 +401,7 @@ static int virLockManagerDlmGetLocalNodeId(uint32_t *nodeId)
                        _("unable to create a new connection to the CPG service"));
 		return -1;
     }
-    
+
 	if( cpg_local_get(handle, nodeId) != CS_OK) {
         virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
                        _("unable to get the local node id by the CPG service"));
@@ -478,7 +480,9 @@ static int virLockManagerDlmSetupLockRecordFile(const char *lockRecordFilePath,
         return -1;
     }
 
-    /* purgeLockspace flag means purging orphan locks belong to any process in this lockspace */
+    /* purgeLockspace flag means purging orphan locks belong to any process
+     * in this lockspace.
+     */
     if (purgeLockspace && !virLockManagerDlmGetLocalNodeId(&nodeId)) {
         if (dlm_ls_purge(lockspace, nodeId, 0)) {
             VIR_WARN("node=%u purge DLM locks failed in lockspace=%s",
@@ -511,7 +515,7 @@ static int virLockManagerDlmSetup(void)
                        _("unable to initialize mutex"));
         return -1;
     }
- 
+
 
     /* check whether dlm is running or not */
     if (access(DLM_CLUSTER_NAME_PATH, F_OK)) {
@@ -542,7 +546,9 @@ static int virLockManagerDlmSetup(void)
     }
 
     /* we need file to record lock information used by rebooted libvirtd */
-    if (virLockManagerDlmSetupLockRecordFile(driver->lockRecordFilePath, newLockspace, driver->purgeLockspace)) {
+    if (virLockManagerDlmSetupLockRecordFile(driver->lockRecordFilePath,
+                                             newLockspace,
+                                             driver->purgeLockspace)) {
         virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
                        _("unable to initialize DLM lock file"));
         return -1;
@@ -577,7 +583,7 @@ static int virLockManagerDlmInit(unsigned int version,
     driver->requireLeaseForDisks = !driver->autoDiskLease;
     driver->purgeLockspace = true;
 
-    if (virAsprintf(&driver->lockspaceName, 
+    if (virAsprintf(&driver->lockspaceName,
                   "%s", DLM_LOCKSPACE_NAME) < 0)
         goto error;
 
@@ -708,7 +714,7 @@ static void virLockManagerDlmFree(virLockManagerPtr lock)
         return;
 
     for (i = 0; i < priv->nresources; i++)
-   		VIR_FREE(priv->resources[i].name);
+        VIR_FREE(priv->resources[i].name);
 
     VIR_FREE(priv->resources);
     VIR_FREE(priv->vm_name);
@@ -850,7 +856,7 @@ static int virLockManagerDlmAcquire(virLockManagerPtr lock,
                     virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
                                    _("failed to acquire lock: the lock could not be granted"));
                 else {
-                    virReportSystemError(errno, 
+                    virReportSystemError(errno,
                                          _("failed to acquire lock: rv=%d lockStatus=%d"),
                                          rv, lksb.sb_status);
                 }
@@ -859,15 +865,17 @@ static int virLockManagerDlmAcquire(virLockManagerPtr lock,
                 goto cleanup;
             }
 
-            theLock = virLockManagerDlmRecordLock(priv->resources[i].name, priv->resources[i].mode,
-                                               lksb.sb_lkid, priv->vm_pid);
+            theLock = virLockManagerDlmRecordLock(priv->resources[i].name,
+                                                  priv->resources[i].mode,
+                                                  lksb.sb_lkid,
+                                                  priv->vm_pid);
             if (!theLock) {
-        		virReportSystemError(errno,
-                		             _("unable to record lock information, "
-                        	         "lockName=%s lockMode=%s lockId=%d vm_pid=%jd"),
-                            		 NULLSTR(priv->resources[i].name),
+			virReportSystemError(errno,
+                                     _("unable to record lock information, "
+                                        "lockName=%s lockMode=%s lockId=%d vm_pid=%jd"),
+                                     NULLSTR(priv->resources[i].name),
                                      NULLSTR(virLockManagerDlmToModeText(priv->resources[i].mode)),
-                             		 lksb.sb_lkid, (intmax_t)priv->vm_pid);
+                                     lksb.sb_lkid, (intmax_t)priv->vm_pid);
                 /* record lock failed, we can't save lock information in memory, so release it */
                 rv = dlm_ls_unlock_wait(lockspace, lksb.sb_lkid, 0, &lksb);
                 if (!rv)
@@ -927,7 +935,7 @@ static void virLockManagerDlmDeleteLock(const virLockInformationPtr lock,
     }
 
     virMutexLock(&(lockListWait.fileMutex));
-    virLockManagerDlmWriteLock(lock, fd, 0); 
+    virLockManagerDlmWriteLock(lock, fd, 0);
     virMutexUnlock(&(lockListWait.fileMutex));
 
     if (VIR_CLOSE(fd) < 0) {
@@ -973,14 +981,17 @@ static int virLockManagerDlmRelease(virLockManagerPtr lock,
                (theLock->mode == resource->mode)) {
 
                 /*
-                 * there are some locks from adopting, the existence of `(void *)1` when adopting makes
-                 * 'terminated by signal SIGSEGV (Address boundary error)' error appear.
+                 * there are some locks from adopting, the existence of `(void *)1`
+                 * when adopting makes 'terminated by signal SIGSEGV (Address
+                 * boundary error)' error appear.
+                 *
                  * The following code reference to lvm2 project's implement.
                  */
                 lksb.sb_lkid = theLock->lkid;
                 rv = dlm_ls_lock_wait(lockspace, LKM_NLMODE,
                                       &lksb, LKF_CONVERT,
-                                      resource->name, strlen(resource->name),
+                                      resource->name,
+                                      strlen(resource->name),
                                       0, NULL, NULL, NULL);
 
                 if (rv < 0) {
