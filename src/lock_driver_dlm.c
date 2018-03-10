@@ -297,8 +297,6 @@ virLockManagerDLMAdoptLocks(const char *path)
                 goto cleanup;
             if (VIR_STRDUP(res->name, tmpArray[2]) < 0)
                 goto cleanup;
-            res->nLocks = res->nHolders = 0;
-            res->mode = LKM_NLMODE;
 
             if (virHashAddEntry(driver->resources, res->name, res) < 0) {
                 VIR_FREE(res->name);
@@ -742,8 +740,6 @@ virLockManagerDLMAcquire(virLockManagerPtr lock,
                     return -1;
                 if (VIR_STRDUP(res->name, args->name) < 0)
                     return -1;
-                res->nLocks = res->nHolders = 0;
-                res->mode = LKM_NLMODE;
 
                 if (virHashAddEntry(driver->resources, args->name, res) < 0) {
                     VIR_FREE(res->name);
