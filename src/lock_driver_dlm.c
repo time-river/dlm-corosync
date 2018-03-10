@@ -152,32 +152,59 @@ static int virLockManagerDLMLoadConfig(const char *configFile)
 }
 
 static int
+virLockManagerDLMWrite(virLockManagerDLMLockPtr lock, char *name)
+{
+    char *string = NULL;
+    int rv = -1;
+
+    if (virAsprintf(&string, "%u,%u,%s\n",
+                    lock->lkid, (unsigned int)lock->vm_pid, name) < 0)
+        goto cleanup;
+
+    if (safewrite(driver->lockFd, string, strlen(string)) < 0)
+        goto cleanup;
+
+    if (fdatasync(driver->lockFd) < 0)
+        goto cleanup;
+
+    rv = 0;
+ cleanup:
+    VIR_FREE(string);
+
+    return rv;
+}
+
+static int
 virLockManagerDLMAdoptLocksInternal(void *payload,
                                     const void *name ATTRIBUTE_UNUSED,
-                                    void *data)
+                                    void *data ATTRIBUTE_UNUSED)
 {
     virLockManagerDLMLockResourcePtr res = payload;
+    unsigned int mode = LKM_PRMODE;
     struct dlm_lksb lksb;
-    size_t i;
+    ssize_t i;
+    int rv;
 
-    for (i = res->nLocks-1; i < 0; i--) {
-        memset(lksb, 0, sizeof(lksb));
+    for (i = res->nLocks-1; i >= 0; i--) {
+        memset(&lksb, 0, sizeof(lksb));
 
-        rv = dlm_ls_lockx(driver->lockspace, LKM_PRMODE,
+        rv = dlm_ls_lockx(driver->lockspace, mode,
                           &lksb, LKF_PERSISTENT|LKF_ORPHAN,
                           res->name, strlen(res->name),
                           0, (void *)1, (void *)1,
                           (void *)1, NULL, NULL);
-        if ((rv == -1) && (errno = -EAGAIN))
-            rv = dlm_ls_lockx(driver->lockspace, LKM_EXMODE,
+        if ((rv == -1) && (errno == EAGAIN)) {
+            mode = LKM_EXMODE;
+            rv = dlm_ls_lockx(driver->lockspace, mode,
                               &lksb, LKF_PERSISTENT|LKF_ORPHAN,
                               res->name, strlen(res->name),
                               0, (void *)1, (void *)1,
                               (void *)1, NULL, NULL);
+        }
 
         if (rv < 0) {
             virReportError(VIR_ERR_INTERNAL_ERROR,
-                           _("unable to adopt lock, rv=%d lockName=%s lockStatus"),
+                           _("unable to adopt lock, rv=%d lockName=%s lockStatus=%d"),
                            rv, res->name, lksb.sb_status);
             VIR_DELETE_ELEMENT(res->locks, i, res->nLocks);
 
@@ -186,62 +213,15 @@ virLockManagerDLMAdoptLocksInternal(void *payload,
 
         res->locks[i].lkid = lksb.sb_lkid;
         res->nHolders += 1;
+        res->mode = mode;
     }
     
-    return 0;
-}
+    res->nLocks = res->nHolders;
 
-static int
-virLockManagerDLMDefFormat(virBufferPtr buf)
-{
-    if (!buf)
-        return -1;
-
-    virBufferAsprintf(buf, "<DLMLocks>\n");
-    virBufferAdjustIndent(buf, 2);
-    if (virHashForEach(driver->resources,
-                       virLockManagerDLMDefLockFormatInternal,
-                       buf))
-        goto error;
-    virBufferAdjustIndent(buf, -2);
-    virBufferAsprintf(buf, "</DLMLocks>\n");
-
-    if (virBufferCheckError(buf) < 0)
-        goto error;
+    if (res->nLocks == 0)
+        virHashRemoveEntry(driver->resources, res->name);
 
     return 0;
-
- error:
-    virBufferFreeAndReset(buf);
-    return -1;
-}
-
-static void
-virLockManagerDLMSaveLock(int signum)
-{
-    virBuffer buf = VIR_BUFFER_INITIALIZER;
-    char *xml = NULL;
-
-    switch (signum) {
-    case SIGHUP:
-    case SIGINT:
-    case SIGQUIT:
-    case SIGTERM:
-        if (virLockManagerDLMDefFormat(&buf) < 0)
-            break;
-
-        xml = virBufferContentAndReset(&buf);
-        ignore_value(virXMLSaveFile(driver->lockFilePath, NULL, NULL, xml));
-        VIR_FREE(xml);
-        break;
-    default:
-        return;
-    }
-
-    if (signal(signum, SIG_DFL) != SIG_ERR)
-        ignore_value(raise(signum));
-
-    return;
 }
 
 static void
@@ -271,59 +251,6 @@ virLockManagerDLMResourceDataFree(void *opaque,
     VIR_FREE(res);
 }
 
-static void
-virLockManagerDLMAdoptLocks(virLockManagerDLMLockResourcePtr args,
-                           unsigned int *owners,
-                           size_t n)
-{
-    virLockManagerDLMLockResourcePtr res = NULL;
-    struct dlm_lksb lksb = {0};
-    int rv = -1;
-    size_t i;
-
-    if (VIR_ALLOC(res) < 0)
-        return;
-
-    if (VIR_STRDUP(res->name, args->name) < 0)
-        goto error;
-
-    res->nLocks = res->nHolders = 0;
-    res->mode = args->mode;
-    res->locks = NULL;
-
-    if (virHashAddEntry(driver->resources, res->name, res))
-        goto error;
-
-    for (i = 0; i < n; i++) {
-        rv = dlm_ls_lockx(driver->lockspace, res->mode,
-                          &lksb, LKF_PERSISTENT|LKF_ORPHAN,
-                          res->name, strlen(res->name),
-                          0, (void *)1, (void *)1,
-                          (void *)1, NULL, NULL);
-        if (rv) {
-            virReportError(VIR_ERR_INTERNAL_ERROR,
-                           _("unable to adopt lock, rv=%d lockName=%s lockMode=%u"),
-                           rv, res->name, res->mode);
-            continue;
-        }
-
-        if (VIR_EXPAND_N(res->locks, res->nLocks, 1) < 0)
-            continue;
-
-        res->locks[i].vm_pid = owners[i];
-        res->locks[i].lkid = lksb.sb_lkid;
-    }
-
-    res->nHolders = res->nLocks;
-
-    return;
- error:
-    VIR_FREE(res->name);
-    VIR_FREE(res);
-
-    return;
-}
-
 static int
 virLockManagerDLMAdoptLocks(const char *path)
 {
@@ -333,16 +260,16 @@ virLockManagerDLMAdoptLocks(const char *path)
     virLockManagerDLMLockResourcePtr res = 0;
     unsigned int vm_pid = 0;
     unsigned int lkid = 0;
-    size_t n = 0, tokcount = 0;
+    size_t n = 0, tokcount = 0, i;
     ssize_t count = 0;
     int rv = -1;
 
-    if (access(path, R_OK) == -1)
+    if (access(path, R_OK) != 0)
         return 0;
 
     fp = fopen(path, "r");
     if (fp == NULL) {
-        virSystemError(errno,
+        virReportSystemError(errno,
                        _("unable to open '%s'"),
                        path);
         return -1;
@@ -359,13 +286,10 @@ virLockManagerDLMAdoptLocks(const char *path)
             (tokcount != 3))
             goto cleanup;
 
-        if (virStrToLong_ui(tmpArray[1], NULL, 10, &vm_pid) < 0)
+        if (virStrToLong_ui(tmpArray[0], NULL, 10, &lkid) < 0)
             goto cleanup;
 
-        if (vm_pid == 0)
-            continue;
-
-        if (virStrToLong_ui(tmpArray[1], NULL, 10, &lkid) < 0)
+        if (virStrToLong_ui(tmpArray[1], NULL, 10, &vm_pid) < 0)
             goto cleanup;
 
         if (!(res = virHashLookup(driver->resources, tmpArray[2]))) {
@@ -375,13 +299,29 @@ virLockManagerDLMAdoptLocks(const char *path)
                 goto cleanup;
             res->nLocks = res->nHolders = 0;
             res->mode = LKM_NLMODE;
+
+            if (virHashAddEntry(driver->resources, res->name, res) < 0) {
+                VIR_FREE(res->name);
+                VIR_FREE(res);
+                goto cleanup;
+            }
         }
 
-        if (VIR_EXPAND(res->locks, priv->nLocks, 1) < 0)
+        if (vm_pid == 0) {
+            for (i = 0; i < res->nLocks; i++) {
+                if (lkid == res->locks[i].lkid) {
+                    VIR_DELETE_ELEMENT(res->locks, i, res->nLocks);
+                    break;
+                }
+            }
+            continue;
+        }
+
+        if (VIR_EXPAND_N(res->locks, res->nLocks, 1) < 0)
             goto cleanup;
 
-        res->locks[priv->nLocks-1].vm_pid = vm_pid;
-        res->locks[priv->nLocks-1].lkid = lkid;
+        res->locks[res->nLocks-1].vm_pid = vm_pid;
+        res->locks[res->nLocks-1].lkid = lkid;
 
         virStringListFree(tmpArray);
     }
@@ -394,6 +334,7 @@ virLockManagerDLMAdoptLocks(const char *path)
     rv = 0;
 
  cleanup:
+    VIR_FORCE_FCLOSE(fp);
     return rv;
 }
 
@@ -430,6 +371,22 @@ virLockManagerDLMGetLocalNodeId(unsigned int *nodeId)
 }
 
 static int
+virLockManagerDLMWriteLocksInternal(void *payload,
+                                    const void *name ATTRIBUTE_UNUSED,
+                                    void *data ATTRIBUTE_UNUSED)
+{
+    virLockManagerDLMLockResourcePtr res = payload;
+    size_t i;
+
+    for (i = 0; i < res->nLocks; i++) {
+        if (virLockManagerDLMWrite(res->locks+i, res->name) < 0)
+            return -1;
+    }
+
+    return 0;
+}
+
+static int
 virLockManagerDLMSetupLockRecordFile(const bool newLockspace,
                                      const bool purgeLockspace)
 {
@@ -437,7 +394,7 @@ virLockManagerDLMSetupLockRecordFile(const bool newLockspace,
     char *path = NULL;
     int rv = -1;
     
-    path = virFileBuildPath("RUNSTATEDIR", "libvirt", ".txt")
+    path = virFileBuildPath(RUNSTATEDIR, "/libvirt/DLMlocks", ".txt");
 
     if (!newLockspace &&
         virLockManagerDLMAdoptLocks(path) < 0) {
@@ -462,6 +419,11 @@ virLockManagerDLMSetupLockRecordFile(const bool newLockspace,
                              path);
         goto cleanup;
     }
+
+    if (virHashForEach(driver->resources,
+                       virLockManagerDLMWriteLocksInternal,
+                       NULL) < 0)
+    goto cleanup;
 
     rv = 0;
  cleanup:
@@ -531,7 +493,6 @@ virLockManagerDLMDeinit(void)
         VIR_FORCE_CLOSE(driver->lockFd);
 
     VIR_FREE(driver->lockspaceName);
-    VIR_FREE(driver->lockFilePath);
     VIR_FREE(driver);
 
     return 0;
@@ -542,6 +503,8 @@ virLockManagerDLMInit(unsigned int version,
                       const char *configFile,
                       unsigned int flags)
 {
+    VIR_DEBUG("version=%u configFile=%s flags=0x%x", version, NULLSTR(configFile), flags);
+
     virCheckFlags(0, -1);
 
     if (driver)
@@ -561,10 +524,6 @@ virLockManagerDLMInit(unsigned int version,
     driver->purgeLockspace = true;
 
     if (VIR_STRDUP(driver->lockspaceName, "libvirt") < 0)
-        goto error;
-
-    if (virAsprintf(&driver->lockFilePath,
-                    "%s/libvirt/DLMLocks.xml", RUNSTATEDIR) < 0)
         goto error;
 
     if (virLockManagerDLMLoadConfig(configFile) < 0)
@@ -738,26 +697,6 @@ virLockManagerDLMAddResource(virLockManagerPtr lock,
 }
 
 static int
-virLockManagerDLMRecord(unsigned int lkid, pid_t pid, char *name)
-{
-    char *string = NULL;
-    int rv = -1
-
-    if (virAsprintf(&string, "%u,%u,%s\n",
-                    lkid, (unsigned int)pid, name) < 0)
-        goto cleanup;
-
-    if (safewrite(driver->lockFd, string, strlen(string)) < 0)
-        goto cleanup;
-
-    rv = 0;
- cleanup:
-    VIR_FREE(string);
-
-    return rv;
-}
-
-static int
 virLockManagerDLMAcquire(virLockManagerPtr lock,
                          const char *state ATTRIBUTE_UNUSED,
                          unsigned int flags,
@@ -849,7 +788,7 @@ virLockManagerDLMAcquire(virLockManagerPtr lock,
                                    _("failed to acquire lock: the lock could not be granted"));
                 else
                     virReportError(errno,
-                                   _("failed to acquire lock: rv=%d lockStatus=%s"),
+                                   _("failed to acquire lock: rv=%d lockStatus=%d"),
                                    rv, lksb.sb_status);
                 return -1;
             }
@@ -858,7 +797,7 @@ virLockManagerDLMAcquire(virLockManagerPtr lock,
             res->nHolders += 1;
             res->mode = args->mode;
 
-            if (virLockManagerDLMRecord(lksb.sb_lkid, priv->vm_pid, args->name) < 0) {
+            if (virLockManagerDLMWrite(res->locks+index, res->name) < 0) {
                 virReportSystemError(errno, "%s",
                                      "unable to write lock information to file");
                 return -1;
@@ -900,16 +839,14 @@ virLockManagerDLMRelease(virLockManagerPtr lock,
     for (i = 0; i < priv->nresources; i++) {
         args = priv->resources + i;
 
-        if (!(res = virHashLookup(driver->resources, args->name))) {
+        if (!(res = virHashLookup(driver->resources, args->name)))
             continue;
-        }
 
         if (res->nHolders == 0)
             continue;
 
         for (i = 0; i < res->nLocks; i++) {
-            if ((priv->vm_pid == res->locks[i].vm_pid) &&
-                (args->mode == res->mode))
+            if (priv->vm_pid == res->locks[i].vm_pid)
                 break;
         }
 
@@ -931,14 +868,14 @@ virLockManagerDLMRelease(virLockManagerPtr lock,
 
         res->nHolders -= 1;
         res->locks[i].vm_pid = 0;
-        if (res->nHolders == 0)
-            virHashRemoveEntry(driver->resources, res->name);
-
-        if (virLockManagerDLMRecord(lksb.sb_lkid, 0, args->name) < 0) {
+        if (virLockManagerDLMWrite(res->locks+i, res->name) < 0) {
             virReportSystemError(errno, "%s",
                                  "unable to write lock information to file");
             return -1;
         }
+
+        if (res->nHolders == 0)
+            virHashRemoveEntry(driver->resources, res->name);
 
     }
 
