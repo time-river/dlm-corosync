@@ -1007,7 +1007,7 @@ static int virLockManagerDlmRelease(virLockManagerPtr lock,
                 virLockManagerDlmDeleteLock(theLock, driver->lockRecordFilePath);
 
                 rv = dlm_ls_unlock_wait(lockspace, lksb.sb_lkid, 0, &lksb);
-                if (rv < 0) {
+                if ((rv < 0) || (lksb.sb_status != EUNLOCK)) {
                     virReportSystemError(errno,
                                          _("failed to release lock: rv=%d lockStatus=%d"),
                                          rv, lksb.sb_status);
