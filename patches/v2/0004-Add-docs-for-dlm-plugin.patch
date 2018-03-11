@@ -1,0 +1,159 @@
+From a5dd4cdbe99c0c89c468bfeb2932c3fc38a8f1e7 Mon Sep 17 00:00:00 2001
+From: Lin Fu <lfu@suse.com>
+Date: Sun, 11 Mar 2018 20:00:56 +0800
+Subject: [PATCH 4/4] Add docs for dlm plugin
+
+Signed-off-by: Lin Fu <lfu@suse.com>
+---
+ docs/locking-dlm.html.in | 121 +++++++++++++++++++++++++++++++++++++++++++++++
+ docs/locking.html.in     |   6 +++
+ 2 files changed, 127 insertions(+)
+ create mode 100644 docs/locking-dlm.html.in
+
+diff --git a/docs/locking-dlm.html.in b/docs/locking-dlm.html.in
+new file mode 100644
+index 0000000..9965db4
+--- /dev/null
++++ b/docs/locking-dlm.html.in
+@@ -0,0 +1,121 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE html>
++<html xmlns="http://www.w3.org/1999/xhtml">
++  <body>
++    <h1>Virtual machine lock manager, DLM plugin</h1>
++
++    <ul id="toc"></ul>
++
++    <p>
++      This page describes use of the
++      <a href="https://pagure.io/dlm">DLM</a> service
++      as a <a href="locking.html">lock driver</a> plugin
++      plugin for virtual machine disk mutual exclusion.
++    </p>
++
++    <h2><a id="background">DLM background</a></h2>
++
++    <p>
++      The DLM plugin makes use of the Linux DLM module to
++      hold the locks, which uses the API provided by
++      <code>libdlm</code> in userspace. It also needs
++      <code><a href="http://corosync.github.io/corosync/">corosync</a></code>
++      to provide a way of message communication between cluster
++      nodes.
++    </p>
++
++    <h2><a id="compilation">DLM compilation</a></h2>
++
++    <p>
++      Add <code>--with-dlm</code> to compile the
++      <strong>DLM</strong> plugin forcibly. Before compilation,
++      there are some dependens which need to be installed. In deb
++      distribution, it may be <code>libcpg-dev</code> and
++      <code>libdlm-dev</code>; for RPM distribution, it could be
++      <code>libcorosync-devel</code> and <code>libdlm-devel</code>.
++    </p>
++
++    <h2><a id="dlm">DLM daemon setup</a></h2>
++
++    <p>
++      After install DLM plugin, the next step is to start the
++      corosync and DLM daemon. It depends corosync and libdlm.
++      In deb distributions, the following commands can be run:
++    </p>
++
++    <pre>
++$ sudo apt update
++$ sudo apt install libdlm corosync
++    </pre>
++
++    <p>
++      For RPM distributions, for example, OpenSUSE, there is:
++    </p>
++
++    <pre>
++$ sudo zypper in libdlm3 corosync
++    </pre>
++
++    <p>
++      Then you should configure the corosync,
++      <code>$man corosync.conf</code> will tell you how to configure
++      it. For maximum safety DLM prefers to
++      have a fence mechanism. This will cause the entire host to
++      be rebooted in the event that node is lost in cluster nodes.
++      Default, DLM daemon enables this feature which needs some
++      dependents, such as
++      <a href="http://www.linux-ha.org/wiki/SBD_Fencing">sbd</a>
++      software. Daemons can be started as follows:
++    </p>
++
++    <pre>
++$ sudo systemctl start dlm
++    </pre>
++
++    <p>
++      <em>Note:</em> If you wish to avoid the use of the fence
++      mechanism, add the following line to <code>/etc/default/dlm</code>
++      (for deb distributions), or <code>/etc/sysconfig/dlm</code>
++      before start it:
++    </p>
++
++    <pre>
++DLM_CONTROLD_OPTS="-f 0"
++    </pre>
++
++    <h2><a id="dlmplugin">libvirt DLM plugin configuration</a></h2>
++
++    <p>
++      Once daemons have been running, the next step is to configure
++      the libvirt DLM plugin. There is a separate configuration file
++      for each libvirt driver that is using DLM. For QEMU, we will
++      edit <code>/etc/libvirt/qemu-dlm.conf</code>.
++    </p>
++
++
++    <h2><a id="qemuconfig">QEMU/KVM driver configuration</a></h2>
++
++    <p>
++      The QEMU/KVM driver is fully integrated with the lock
++      manager framework as of release <span>0.9.3</span>.
++      The out of the box configuration, however, currently
++      uses the <strong>nop</strong> lock manager plugin defaultly.
++      To activate the <strong>DLM</strong> driver. This is achieved
++      by editing the QEMU driver configuration file
++      (<code>/etc/libvirt/qemu.conf</code>) and changing the
++      <code>lock_manager</code> configuration tunable.
++    </p>
++
++    <pre>
++$ sudo augtool -s set /files/etc/libvirt/qemu.conf/lock_manager dlm
++$ sudo systemctl restart libvirtd
++    </pre>
++
++    <p>
++      Every time you start a guest, the DLM plugin will acquire locks
++      based on SHA256 sum. The acquire/release history will be recorded
++      in <code>/var/run/libvirt/DLMlocks.txt</code>.
++    </p>
++
++  </body>
++</html>
+diff --git a/docs/locking.html.in b/docs/locking.html.in
+index 4532dbd..ecb1a3b 100644
+--- a/docs/locking.html.in
++++ b/docs/locking.html.in
+@@ -43,6 +43,12 @@
+         possible to use it in a manual mode where the management
+         application creates leases in SAN storage volumes.
+       </dd>
++      <dt><code><a href="locking-dlm.html">DLM</a></code></dt>
++      <dd>This is an another implementation. It uses DLM provided
++        by Linux kernel. Compared with sanlock and lockd, it doesn't
++        require the shared filesystem. It's a good choice to choose
++        if DLM has beed used in the distributed environment.
++      </dd>
+     </dl>
+   </body>
+ </html>
+-- 
+2.7.4
+

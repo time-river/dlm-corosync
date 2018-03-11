@@ -1,0 +1,43 @@
+From b0aefefc415ef4dab30e00bbbd93fd29f9123191 Mon Sep 17 00:00:00 2001
+From: Lin Fu <lfu@suse.com>
+Date: Sun, 11 Mar 2018 20:01:29 +0800
+Subject: [PATCH 0/4] *** SUBJECT HERE ***
+
+*** BLURB HERE ***
+
+Lin Fu (4):
+
+In v2:
+  - use hash instead of list to store locks information
+  - change some functions from raw to cooked defined is src/util
+  - re-design adopt locks
+  - add docs 
+
+v1 is here:
+  https://www.redhat.com/archives/libvir-list/2018-February/msg00185.html
+
+ configure.ac                        |   6 +
+ docs/locking-dlm.html.in            | 121 +++++
+ docs/locking.html.in                |   6 +
+ m4/virt-cpg.m4                      |  37 ++
+ m4/virt-dlm.m4                      |  36 ++
+ src/libxl/libxl.conf                |   8 +-
+ src/locking/Makefile.inc.am         |  57 ++-
+ src/locking/dlm.conf                |  39 ++
+ src/locking/libvirt_dlm.aug         |  34 ++
+ src/locking/lock_driver_dlm.c       | 908 ++++++++++++++++++++++++++++++++++++
+ src/locking/test_libvirt_dlm.aug.in |   8 +
+ src/qemu/qemu.conf                  |   8 +-
+ src/qemu/qemu_process.c             |  10 +
+ 13 files changed, 1270 insertions(+), 8 deletions(-)
+ create mode 100644 docs/locking-dlm.html.in
+ create mode 100644 m4/virt-cpg.m4
+ create mode 100644 m4/virt-dlm.m4
+ create mode 100644 src/locking/dlm.conf
+ create mode 100644 src/locking/libvirt_dlm.aug
+ create mode 100644 src/locking/lock_driver_dlm.c
+ create mode 100644 src/locking/test_libvirt_dlm.aug.in
+
+-- 
+2.7.4
+
