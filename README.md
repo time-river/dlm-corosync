@@ -40,6 +40,9 @@ Corosync 全称 The Corosync Cluster Engine，它是集群节点之间通信的�
 ```
 ├── design -- 设计上的考虑
 ├── LICENSE
+├── thesis
+│   ├── DLM-Corosync-in-Libvirt.pdf -- 毕业设计论文
+│   └── graduation-design-reply.pdf -- 毕业设计答辩slides
 ├── patches
 │   ├── v1 -- 第一版本的patch set
 │   └── v2 -- 第二版本的patch set
