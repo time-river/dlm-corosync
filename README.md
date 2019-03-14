@@ -67,3 +67,8 @@ Corosync 全称 The Corosync Cluster Engine，它是集群节点之间通信的�
 lock manager重复。虽然libvirt不仅仅可以管理QEMU/KVM，但它毕竟是主流。
 
 因此放弃提交给社区，项目结束。
+
+---
+
+by river(river@vvl.me)
+2019.03.14 整理
