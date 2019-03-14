@@ -4,7 +4,6 @@ flags:
 - LKF_PERSISTENT
     - `dlm_purge()`
 
-
   If the lock manager cannot grant your lock request, it normally adds your request to the end of the wait queue, along with all other blocked lock requests on the lock resource. However, you can specify that the lock manager not queue your request if it cannot be granted immediately by specifying the LKF_NOQUEUE flag as an argument to the lock routine.
   If your lock request cannot be granted immediately, the dlm_lock routine returns the status 0 and the AST is queued with the status EAGAIN in the status field of the lock status block.
 

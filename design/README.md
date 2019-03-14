@@ -3,22 +3,22 @@ This is the implementation of the RFC from
 
 The following is the design of this iplementation.
 
-Environmental requirements:
+## Environmental requirements
 
   DLM is a symmetric general-purpose distributed lock manager,
-  consisting of a kernel modules named 'dlm.ko', userspace
-  application named 'libdlm', and cluster infrastructure
-  environment which could be 'corosync' responsible for communication.
+  consisting of a kernel modules named *dlm.ko*, userspace
+  application named *libdlm*, and cluster infrastructure
+  environment which could be *corosync* responsible for communication.
 
   For more usage about libdlm and corosync,  `man corosync.conf`
   and `man dlm_controld`
 
-Implementation details:
+## Implementation details
 
-  In order to use dlm in cluster, daemons, 'dlm_controld' and
-  'corosync', must have been runned before. Because dlm is
+  In order to use dlm in cluster, daemons, *dlm_controld* and
+  *corosync*, must have been runned before. Because dlm is
   asynchronous, there is something receiving notification from
-  kernel. 'libdlm' provides `dlm_pthread_init` and
+  kernel. *libdlm* provides `dlm_pthread_init` and
   `dlm_ls_pthread_init` for this purpose.
 
   Here is lockspace concept in dlm. Lockspace is different
@@ -26,7 +26,7 @@ Implementation details:
   one namespace for locks that are part of a single application.
   One lock must belong to one lockspace, and is associated with
   one lock resource, owned by one process in one node.
-  
+
   Lock/unlock need specific flag. Lock flags `LKF_PERSISTENT`
   specifies a lock that wouldn't be unlocked if the process was
   dead or lockspace was closed (`dlm_close_lockspace`). lockspace
@@ -51,9 +51,9 @@ Implementation details:
   process inherited from libvirt would tell lock daemon to release
   their locks instead of libvirt. So destroy or shutdown qemu
   instance won't make dlm release locks. I refer to the action of
-  libxl(`libxlDomainCleanup` function in 'src/libxl/libxl_domain.c'),
+  libxl(`libxlDomainCleanup` function in *src/libxl/libxl_domain.c*),
   add some code after unlink pid and xml files in `qemuProcessStop`
-  ('src/qemu/qemu_process.c') to proactively tell lock manager
+  (*src/qemu/qemu_process.c*) to proactively tell lock manager
   release locks.
 
   Adhere to the simple, enough principle, lock information using

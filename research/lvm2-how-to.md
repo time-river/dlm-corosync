@@ -32,7 +32,7 @@ dlm running
 
 2. get list of VGs from lvmetad with a lockd type(dlm | sanlock)
 
-
+```
 struct lockspace {
     struct list_head list;      /* lockspaces */
     char name[MAX_NAME+1];
@@ -81,6 +81,7 @@ struct resource {
     char lv_args[MAX_ARGS+1];
     char lm_data[0];        /* lock manager specific data */
 };
+```
 
 get all VGs with lockd type
   --> for each VGs, create a struct resource on ls->resources
@@ -93,6 +94,7 @@ remove inactive LV
 
 ?. create and queue start actions to add locksapces
 
+```
         act->op = LD_OP_START;
         act->flags = (LD_AF_ADOPT | LD_AF_WAIT);
         act->rt = LD_RT_GL;
@@ -115,9 +117,11 @@ r->
     strncpy(r->name, R_NAME_VG, MAX_NAME);
 
 lockspace_thread_main
+```
 
 >+1. lock-adopt actions for active LVs and GL/VG locks
 
+```
 adopt orphan LV lock
 
             act->op = LD_OP_LOCK;
@@ -154,4 +158,4 @@ adopt orphan GL lock
 
             act->flags |= LD_AF_SEARCH_LS;
             act->flags |= LD_AF_WAIT_STARTING;
-
+```
